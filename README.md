@@ -29,6 +29,22 @@ A Jellyfin client designed for some social VR games
 
 *These are just platforms that have been tested, feel free to PR with other platforms if you've tested on them*
 
+## Screenshots
+
+
+<details>  
+  <summary>Click to expand dropdown</summary>    
+  <div align="center">
+      <img src="https://files.catbox.moe/mp5jst.png" width="200" />
+      <img src="https://files.catbox.moe/co3aj4.png" width="200" />
+      <img src="https://files.catbox.moe/5vjzm1.png" width="200" />
+      <img src="https://files.catbox.moe/2ug5zz.png" width="200" />
+      <img src="https://files.catbox.moe/8vkfyv.png" width="200" />
+      <img src="https://files.catbox.moe/bhknx8.png" width="200" />
+      <img src="https://files.catbox.moe/prsnex.png" width="200" />
+  </div>
+</details>
+
 ## Docker
 
 A docker image is provided for easy deployment:
