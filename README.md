@@ -1,4 +1,4 @@
-# vrchat-jellyfin
+# vr-jellyfin
 
 [![Docker](https://github.com/Zutyosh/vr-jellyfin/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/Zutyosh/vr-jellyfin/actions/workflows/docker-publish.yml)
 
@@ -56,7 +56,7 @@ Docker Compose (recommended):
 ```yaml
 services:
   vrchat-jellyfin:
-    image: ghcr.io/Zutyosh/vr-jellyfin:master
+    image: ghcr.io/zutyosh/vr-jellyfin:master
     container_name: vr-jellyfin
     restart: unless-stopped
     ports:
@@ -86,7 +86,7 @@ docker run -d \
 -e VIDEO_BITRATE: 3000000 \
 -e MAX_HEIGHT: 720 \
 -e MAX_WIDTH: 1280 \
-ghcr.io/Zutyosh/vr-jellyfin:master
+ghcr.io/zutyosh/vr-jellyfin:master
 ```
 
 ## Installation (No Docker)
