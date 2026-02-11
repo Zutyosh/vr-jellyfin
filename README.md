@@ -1,8 +1,8 @@
 # vrchat-jellyfin
 
-[![Docker](https://github.com/gurrrrrrett3/vrchat-jellyfin/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/gurrrrrrett3/vrchat-jellyfin/actions/workflows/docker-publish.yml)
+[![Docker](https://github.com/Zutyosh/vr-jellyfin/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/Zutyosh/vr-jellyfin/actions/workflows/docker-publish.yml)
 
-a Jellyfin client designed for VRChat
+A Jellyfin client designed for some social VR games 
 
 > [!IMPORTANT]
 >
@@ -11,6 +11,8 @@ a Jellyfin client designed for VRChat
 > While this project is functional, it is not yet complete. The end goal is to have a link that can be pasted into the vrchat client, then use the jellyfin cast feature to control the player like a chromecast. This is not yet implemented, and the current implementation is a workaround.
 
 handles requesting media from jellyfin in a format that can be played in vrchat, as well as proxying urls to bypass the risk of sharing a jellyfin api key
+>
+> This repo are an forked repo from https://github.com/orcachillin/vrchat-jellyfin, please check out the original repo for the original code and support the original author <3
 
 ## Tips
 - If the player has a switch between **Video** and **Stream**, use **Stream**
@@ -34,11 +36,10 @@ A docker image is provided for easy deployment:
 Docker Compose (recommended):
 
 ```yaml
-version: '3'
 services:
   vrchat-jellyfin:
-    image: ghcr.io/gurrrrrrett3/vrchat-jellyfin:master
-    container_name: vrchat-jellyfin
+    image: ghcr.io/Zutyosh/vr-jellyfin:master
+    container_name: vr-jellyfin
     restart: unless-stopped
     ports:
       - 4000:4000
@@ -67,7 +68,7 @@ docker run -d \
 -e VIDEO_BITRATE: 3000000 \
 -e MAX_HEIGHT: 720 \
 -e MAX_WIDTH: 1280 \
-ghcr.io/gurrrrrrett3/vrchat-jellyfin:master
+ghcr.io/Zutyosh/vr-jellyfin:master
 ```
 
 ## Installation (No Docker)
@@ -84,7 +85,7 @@ Rename the `.env.example` file to `.env` and fill in the required fields.
 It's reccommended to use a process manager like pm2 to keep it running:
 
 ```bash
-pm2 start dist/index.js --name vrc-jellyfin
+pm2 start dist/index.js --name vr-jellyfin
 pm2 save
 ```
 Make sure to do `pm2 startup` if you haven't already so it autostarts
@@ -137,8 +138,8 @@ Go to the web interface (default port is 4000), select media, and copy the link.
 
 - [x] Jellyfin proxy 
 - [x] Transcoding
-- [ ] Subtitle Baking
-- [ ] Audio track selection
+- [x] Subtitle Baking
+- [x] Audio track selection
 - [x] Subtitle track selection
 - [x] Temp Web interface
 - [ ] Support for the jellyfin cast api
