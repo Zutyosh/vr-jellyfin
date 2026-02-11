@@ -46,7 +46,15 @@ function App() {
         setLoading(true);
         try {
             const proxy = await api.createProxy(item.Id);
-            await navigator.clipboard.writeText(proxy.streamUrl);
+
+            let url = proxy.streamUrl;
+            // Force HTTPS if not localhost
+            const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+            if (!isLocal && url.startsWith('http:')) {
+                url = url.replace(/^http:/, 'https:');
+            }
+
+            await navigator.clipboard.writeText(url);
             showToast(`Link copied: ${item.Name}`, 'success');
         } catch (e) {
             console.error(e);

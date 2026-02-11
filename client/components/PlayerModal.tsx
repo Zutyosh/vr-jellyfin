@@ -75,7 +75,15 @@ export function PlayerModal({ item, onClose }: Props) {
         setLoading(true);
         try {
             const proxy = await api.createProxy(item.Id, selectedSubtitle, selectedAudio);
-            setStreamLink(proxy.streamUrl);
+
+            let url = proxy.streamUrl;
+            // Force HTTPS if not localhost
+            const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+            if (!isLocal && url.startsWith('http:')) {
+                url = url.replace(/^http:/, 'https:');
+            }
+
+            setStreamLink(url);
         } catch (e) {
             console.error(e);
         } finally {
