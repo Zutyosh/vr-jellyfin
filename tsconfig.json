@@ -21,8 +21,15 @@
     "alwaysStrict": true,
     "skipLibCheck": true,
     "experimentalDecorators": true,
-    "emitDecoratorMetadata": true
+    "emitDecoratorMetadata": true,
+    "jsx": "react-jsx"
   },
-  "include": ["src"],
-  "exclude": ["node_modules", "./dist/**/*", "../dist"],
+  "include": [
+    "src"
+  ],
+  "exclude": [
+    "node_modules",
+    "./dist/**/*",
+    "../dist"
+  ],
 }

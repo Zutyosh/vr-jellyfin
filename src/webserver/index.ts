@@ -5,31 +5,101 @@ import http from "http";
 import ProxyManager from "../jellyfin/proxy/proxyManager";
 import { client } from "../jellyfin";
 import { ProxyOptions, SubtitleMethod } from "../jellyfin/proxy/proxy";
+import path from "path";
 
 const app = express();
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-app.use("/assets", express.static("dist/client"));
+// Serve static files from the React app
+app.use("/assets", express.static("dist/client")); // Vite builds assets to dist/client
+app.use(express.static("dist/client"));
 
-// Serve the index.html file from the correct directory
-app.get("/", (req, res) => {
-    res.sendFile("index.html", { root: "dist/client" });
+// API Endpoints
+
+// Get User Views (Libraries)
+app.get("/api/views", async (req, res) => {
+    try {
+        const items = await client.getUserViews();
+        res.json(items);
+    } catch (error) {
+        console.error("Error fetching views:", error);
+        res.status(500).json({ error: "Failed to fetch views" });
+    }
 });
 
-// Endpoint to fetch playable media
-app.get("/i", async (req, res) => {
-    const items = await client.getPlayableMedia();
-    res.json(items);
+// Get Items (Children of a folder)
+app.get("/api/items", async (req, res) => {
+    const parentId = req.query.parentId as string;
+    if (!parentId) {
+        return res.status(400).json({ error: "parentId is required" });
+    }
+    try {
+        const items = await client.getItems(parentId);
+        res.json(items);
+    } catch (error) {
+        console.error("Error fetching items:", error);
+        res.status(500).json({ error: "Failed to fetch items" });
+    }
 });
 
-// Endpoint to create a proxy with subtitle options
-app.post("/i/:id", async (req, res) => {
+// Get Item Details
+app.get("/api/item/:id", async (req, res) => {
     const itemId = req.params.id;
-    const { subtitleStreamIndex } = req.body;
+    try {
+        const item = await client.getItem(itemId);
+        if (!item) {
+            return res.status(404).json({ error: "Item not found" });
+        }
+        res.json(item);
+    } catch (error) {
+        console.error("Error fetching item:", error);
+        res.status(500).json({ error: "Failed to fetch item" });
+    }
+});
+
+// Image Proxy
+// Supports /api/image/:id (Primary) or /api/image/:id/:type/:index
+app.get(["/api/image/:id", "/api/image/:id/:type", "/api/image/:id/:type/:index"], async (req, res) => {
+    const itemId = req.params.id;
+    const imageType = req.params.type;
+    const index = req.params.index ? parseInt(req.params.index) : undefined;
+
+    try {
+        const response = await client.getImage(itemId, imageType, index);
+        if (!response.ok) {
+            return res.status(response.status).send(response.statusText);
+        }
+        // Forward headers
+        const contentType = response.headers.get("content-type");
+        if (contentType) res.setHeader("Content-Type", contentType);
+        const contentLength = response.headers.get("content-length");
+        if (contentLength) res.setHeader("Content-Length", contentLength);
+        const cacheControl = response.headers.get("cache-control");
+        if (cacheControl) res.setHeader("Cache-Control", cacheControl);
+
+        if (response.body) {
+            response.body.pipe(res);
+        } else {
+            res.status(500).send("No image body");
+        }
+    } catch (error) {
+        console.error("Error proxing image:", error);
+        res.status(500).send("Image proxy failed");
+    }
+});
+
+// Create Proxy (Generate Stream Link)
+app.post("/api/proxy/:id", async (req, res) => {
+    const itemId = req.params.id;
+    const { subtitleStreamIndex, audioStreamIndex } = req.body;
 
     const proxyOptions: ProxyOptions = {};
+
+    if (audioStreamIndex != null) {
+        proxyOptions.audioStreamIndex = audioStreamIndex;
+    }
 
     if (subtitleStreamIndex != null) {
         proxyOptions.subtitleStreamIndex = subtitleStreamIndex;
@@ -37,24 +107,32 @@ app.post("/i/:id", async (req, res) => {
     }
 
     const proxy = ProxyManager.createProxy(itemId, proxyOptions);
+
+    // Construct the stream URL that the client will use
+    const host = req.get('host');
+    const protocol = req.protocol;
+    const streamUrl = `${protocol}://${host}/v/${proxy.id}`;
+
     res.json({
         id: proxy.id,
+        streamUrl: streamUrl
     });
 });
 
-// Endpoint to fetch subtitle streams
-app.get("/subtitles/:itemId", async (req, res) => {
+// Get Media Streams (Audio & Subtitles)
+app.get("/api/streams/:itemId", async (req, res) => {
     const itemId = req.params.itemId;
     try {
-        const subtitleStreams = await client.getSubtitleStreams(itemId);
-        res.json({ subtitleStreams });
+        const streams = await client.getMediaStreams(itemId);
+        res.json(streams);
     } catch (error) {
-        console.error('Error fetching subtitle streams:', error);
-        res.status(500).json({ error: 'Failed to fetch subtitle streams.' });
+        console.error('Error fetching media streams:', error);
+        res.status(500).json({ error: 'Failed to fetch media streams.' });
     }
 });
 
-// Endpoint to stream video with subtitle options
+
+// Video Stream Endpoint (The actual proxy)
 app.get("/v/:id", async (req, res) => {
     const proxy = ProxyManager.getProxy(req.params.id);
 
@@ -92,7 +170,18 @@ app.get("/v/:id", async (req, res) => {
     }
 });
 
-// Start the server after Jellyfin client authentication
+
+// Fallback to index.html for SPA (must be last)
+app.get("*", (req, res) => {
+    // Avoid intercepting API calls or specific routes
+    if (req.path.startsWith('/api') || req.path.startsWith('/v/')) {
+        return res.status(404).send("Not Found");
+    }
+    res.sendFile("index.html", { root: "dist/client" });
+});
+
+
+// Start Server
 client.authenticate().then((success) => {
     if (!success) {
         console.error("Failed to authenticate with Jellyfin server");

@@ -49,64 +49,52 @@ export default class JellyfinClient {
         return auth.status == 200;
     }
 
-    public async getPlayableMedia() {
+    public async getUserViews() {
         const viewsResponse = await getUserViewsApi(this._api).getUserViews({
             userId: this.userId!,
         });
-
-        const views = viewsResponse.data.Items || [];
-        const items = await Promise.all(
-            views.map(async (view) => {
-                const itemsResponse = await this.getSubItemsRecursive(view.Id!);
-
-                return {
-                    itemId: view.Id,
-                    name: view.Name,
-                    subItems: itemsResponse,
-                };
-            })
-        ).catch((e) => {
-            console.error("Failed to get playable media", e);
-        });
-        return items;
+        return viewsResponse.data.Items || [];
     }
 
-    public async getSubItems(parent: string) {
+    public async getItems(parentId: string) {
         const itemsResponse = await getItemsApi(this._api).getItems({
             userId: this.userId!,
-            parentId: parent,
+            parentId: parentId,
+            fields: ["AlbumArtist", "Artists"] as any,
         });
 
-        return itemsResponse.data.Items;
+        const items = itemsResponse.data.Items || [];
+        // Filter out missing or virtual items
+        return items.filter((item: any) => {
+            if (item.LocationType === 'Virtual') return false;
+            // SDK might not have IsMissing on BaseItemDto strictly typed depending on version, check existence
+            if (item.IsMissing === true) return false;
+            return true;
+        });
     }
 
-    public async getSubItemsRecursive(parent: string): Promise<NestedItem[]> {
-        const items = await this.getSubItems(parent);
+    public async getItem(itemId: string) {
+        const itemsResponse = await getItemsApi(this._api).getItems({
+            userId: this.userId!,
+            ids: [itemId],
+            fields: ["AlbumArtist", "Artists"] as any,
+        });
+        return itemsResponse.data.Items?.[0];
+    }
 
-        if (!items || items.length == 0) {
-            return [];
+    public async getImage(itemId: string, imageType: string = "Primary", index?: number) {
+        let url = `${this.serverUrl}/Items/${itemId}/Images/${imageType}`;
+        if (index !== undefined) {
+            url += `/${index}`;
         }
 
-        const subItems = await Promise.all(
-            items.map(async (item) => {
-                if (!item.IsFolder) {
-                    return {
-                        itemId: item.Id!,
-                        name: item.Name || undefined,
-                        playable: item.MediaType == "Video",
-                        episode: item.IndexNumber || undefined,
-                    };
-                }
-
-                return {
-                    itemId: item.Id!,
-                    name: item.Name || undefined,
-                    subItems: await this.getSubItemsRecursive(item.Id!),
-                };
-            })
-        );
-
-        return subItems;
+        const response = await fetch(url, {
+            headers: {
+                "User-Agent": JellyfinClient.APP_NAME,
+                "X-Emby-Token": this.apiKey // Important for authorization if needed for some images
+            },
+        });
+        return response;
     }
 
     public async getVideoStream(itemId: string, options?: ProxyOptions) {
@@ -121,6 +109,10 @@ export default class JellyfinClient {
         // Override encoding settings if provided
         for (const [k, v] of Object.entries(encodingSettings)) {
             url.searchParams.set(k, v);
+        }
+
+        if (options?.audioStreamIndex !== undefined) {
+            url.searchParams.set("AudioStreamIndex", options.audioStreamIndex.toString());
         }
 
         // Include subtitle parameters if provided
@@ -142,7 +134,8 @@ export default class JellyfinClient {
     }
 
     // New method to fetch available subtitle streams
-    public async getSubtitleStreams(itemId: string) {
+    // Fetch available media streams (Audio & Subtitles)
+    public async getMediaStreams(itemId: string) {
         const url = `${this.serverUrl}/Items/${itemId}?Fields=MediaStreams&api_key=${this.apiKey}`;
         const response = await fetch(url, {
             headers: {
@@ -150,28 +143,12 @@ export default class JellyfinClient {
             },
         });
         const data = await response.json();
-        const subtitleStreams = data.MediaStreams.filter((stream: any) => stream.Type === "Subtitle");
-        return subtitleStreams;
-    }
-
-    public getRandomItem(items: NestedItem[]): NestedItem | undefined {
-        if (items.length == 0) {
-            return undefined;
-        }
-
-        const item = items[Math.floor(Math.random() * items.length)];
-        if (item.subItems && item.subItems.length > 0) {
-            return this.getRandomItem(item.subItems);
-        }
-
-        return item;
+        const streams = data.MediaStreams || [];
+        return {
+            audio: streams.filter((s: any) => s.Type === 'Audio'),
+            subtitles: streams.filter((s: any) => s.Type === 'Subtitle')
+        };
     }
 }
 
-interface NestedItem {
-    itemId: string;
-    name?: string;
-    subItems?: NestedItem[];
-    playable?: boolean;
-    episode?: number;
-}
+
