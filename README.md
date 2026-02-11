@@ -4,13 +4,15 @@
 
 A Jellyfin client designed for some social VR games 
 
+![Project Logo](https://files.catbox.moe/5po3t5.png)
+
 > [!IMPORTANT]
 >
 > ### Incomplete Project
 >
 > While this project is functional, it is not yet complete. The end goal is to have a link that can be pasted into the vrchat client, then use the jellyfin cast feature to control the player like a chromecast. This is not yet implemented, and the current implementation is a workaround.
 
-handles requesting media from jellyfin in a format that can be played in vrchat, as well as proxying urls to bypass the risk of sharing a jellyfin api key
+> Handles requesting media from jellyfin in a format that can be played in vrchat, as well as proxying urls to bypass the risk of sharing a jellyfin api key
 >
 > This repo are an forked repo from https://github.com/orcachillin/vrchat-jellyfin, please check out the original repo for the original code and support the original author <3
 
