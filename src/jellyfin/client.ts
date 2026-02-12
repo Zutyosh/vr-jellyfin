@@ -102,7 +102,7 @@ export default class JellyfinClient {
         return response;
     }
 
-    public async getStream(itemId: string, options?: ProxyOptions) {
+    public async getStream(itemId: string, proxyId: string, options?: ProxyOptions) {
         // 1. Get Item Type to distinguish Audio vs Video
         const item = await this.getItem(itemId);
         const isAudio = item?.Type === 'Audio';
@@ -152,6 +152,10 @@ export default class JellyfinClient {
                 url.searchParams.set("SubtitleStreamIndex", options.subtitleStreamIndex.toString());
             }
         }
+
+        // Force unique session per proxy instance
+        url.searchParams.set("PlaySessionId", proxyId);
+        url.searchParams.set("DeviceId", `jellyfin-vrchat-${proxyId}`);
 
         // Log Redaction
         const logUrl = new URL(url.toString());

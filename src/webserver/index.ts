@@ -189,7 +189,7 @@ app.get("/v/:id", async (req, res) => {
     const options = proxy.options;
 
     try {
-        const response = await client.getStream(itemId!, options);
+        const response = await client.getStream(itemId!, proxy.id, options);
         if (!response.ok || !response.body) {
             const errorText = await response.text();
             console.error(`Jellyfin stream fetch failed:`, {
