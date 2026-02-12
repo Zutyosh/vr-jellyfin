@@ -1,6 +1,8 @@
 // client/components/DetailView.tsx
 import { Item, api } from '../lib/api';
-import { Play, Calendar, Clock, Star } from 'lucide-react';
+import { Play, Calendar, Clock, Star, ListMusic } from 'lucide-react';
+import { useState } from 'react';
+import { Toast, ToastType } from './Toast';
 
 interface Props {
     item: Item;
@@ -12,9 +14,21 @@ interface Props {
 export function DetailView({ item, items, onNavigate, onPlay }: Props) {
     // If the main item is playable (Movie), use it. Otherwise wait for user to pick an episode.
     const isMainPlayable = item.Type === 'Movie' || item.Type === 'Video' || item.Type === 'Episode';
+    const [toast, setToast] = useState<{ show: boolean; message: string; type: ToastType }>({ show: false, message: '', type: 'success' });
 
     const handlePlayClick = (targetItem: Item) => {
         onPlay(targetItem);
+    };
+
+    const handlePlayAll = async () => {
+        try {
+            const url = api.getPlaylistUrl(item.Id);
+            await navigator.clipboard.writeText(url);
+            setToast({ show: true, message: 'Playlist Link Copied!', type: 'success' });
+        } catch (err) {
+            console.error('Failed to copy playlist link:', err);
+            setToast({ show: true, message: 'Failed to copy link', type: 'error' });
+        }
     };
 
     // Helper to format ticks to runtime
@@ -44,11 +58,21 @@ export function DetailView({ item, items, onNavigate, onPlay }: Props) {
                     <div className="flex flex-col justify-end">
                         <h2 className="text-sm font-bold tracking-widest text-primary uppercase mb-2">Album</h2>
                         <h1 className="text-4xl md:text-6xl font-bold mb-4 text-white">{item.Name}</h1>
-                        <div className="flex items-center gap-4 text-gray-300 text-lg">
+                        <div className="flex items-center gap-4 text-gray-300 text-lg mb-6">
                             {item.AlbumArtist && <span className="font-semibold text-white">{item.AlbumArtist}</span>}
                             {item.ProductionYear && <span>{item.ProductionYear}</span>}
                             <span>{items.length} tracks</span>
                             {/* Calculate total duration if possible, or just show track count */}
+                        </div>
+
+                        <div>
+                            <button
+                                onClick={handlePlayAll}
+                                className="bg-white/10 hover:bg-white/20 text-white px-6 py-2 rounded-full font-medium flex items-center gap-2 transition-colors border border-white/10"
+                            >
+                                <ListMusic className="w-5 h-5" />
+                                Play All
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -85,6 +109,13 @@ export function DetailView({ item, items, onNavigate, onPlay }: Props) {
                         </div>
                     ))}
                 </div>
+
+                <Toast
+                    show={toast.show}
+                    message={toast.message}
+                    type={toast.type}
+                    onClose={() => setToast(prev => ({ ...prev, show: false }))}
+                />
             </div>
         );
     }
@@ -186,6 +217,12 @@ export function DetailView({ item, items, onNavigate, onPlay }: Props) {
                     </div>
                 </div>
             )}
+            <Toast
+                show={toast.show}
+                message={toast.message}
+                type={toast.type}
+                onClose={() => setToast(prev => ({ ...prev, show: false }))}
+            />
         </div>
     );
 }

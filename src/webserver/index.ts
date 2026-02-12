@@ -131,6 +131,50 @@ app.get("/api/streams/:itemId", async (req, res) => {
     }
 });
 
+// Download Playlist (M3U)
+app.get("/api/playlist/:id.m3u", async (req, res) => {
+    const albumId = req.params.id;
+
+    try {
+        // 1. Get album tracks
+        const tracks = await client.getItems(albumId);
+
+        // Filter for audio only (just in case) and sort by IndexNumber
+        const audioTracks = tracks
+            .filter(t => t.Type === 'Audio' && t.Id) // Ensure Id exists
+            .sort((a, b) => (a.IndexNumber || 0) - (b.IndexNumber || 0));
+
+        if (audioTracks.length === 0) {
+            return res.status(404).send("#EXTM3U\n# No tracks found");
+        }
+
+        // 2. Generate M3U Content
+        let m3uContent = "#EXTM3U\n";
+        const host = req.get('host');
+        const protocol = req.protocol;
+
+        for (const track of audioTracks) {
+            if (!track.Id) continue; // Should be handled by filter but for TS safety
+            const proxy = ProxyManager.createProxy(track.Id);
+
+            const durationSec = track.RunTimeTicks ? Math.floor(track.RunTimeTicks / 10000000) : -1;
+            const title = `${track.Artists?.join(', ') || 'Unknown'} - ${track.Name}`;
+
+            m3uContent += `#EXTINF:${durationSec},${title}\n`;
+            m3uContent += `${protocol}://${host}/v/${proxy.id}\n`;
+        }
+
+        // 3. Send Response
+        res.setHeader('Content-Type', 'application/x-mpegurl');
+        res.setHeader('Content-Disposition', `attachment; filename="playlist_${albumId}.m3u"`);
+        res.send(m3uContent);
+
+    } catch (error) {
+        console.error("Error generating playlist:", error);
+        res.status(500).send("Failed to generate playlist");
+    }
+});
+
 
 // Video Stream Endpoint (The actual proxy)
 app.get("/v/:id", async (req, res) => {

@@ -70,5 +70,9 @@ export const api = {
         });
         if (!res.ok) throw new Error('Failed to create proxy');
         return res.json();
+    },
+
+    getPlaylistUrl: (itemId: string) => {
+        return `${window.location.origin}/api/playlist/${itemId}.m3u`;
     }
 };
