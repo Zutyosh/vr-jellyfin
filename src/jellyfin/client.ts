@@ -6,6 +6,11 @@ import { getItemsApi } from "@jellyfin/sdk/lib/utils/api/items-api";
 import fetch from "node-fetch";
 import { resolve } from "path";
 import { ProxyOptions, SubtitleMethod } from "./proxy/proxy"; // Added import
+import * as http from "http";
+import * as https from "https";
+
+const httpAgent = new http.Agent({ keepAlive: true });
+const httpsAgent = new https.Agent({ keepAlive: true });
 
 const encodingSettings: Record<string, string> = require(resolve("./encodingSettings.js")).encodingSettings;
 
@@ -77,7 +82,7 @@ export default class JellyfinClient {
         const itemsResponse = await getItemsApi(this._api).getItems({
             userId: this.userId!,
             ids: [itemId],
-            fields: ["AlbumArtist", "Artists"] as any,
+            fields: ["AlbumArtist", "Artists", "MediaSources"] as any,
         });
         return itemsResponse.data.Items?.[0];
     }
@@ -101,6 +106,7 @@ export default class JellyfinClient {
         // 1. Get Item Type to distinguish Audio vs Video
         const item = await this.getItem(itemId);
         const isAudio = item?.Type === 'Audio';
+        const mediaSourceId = item?.MediaSources?.[0]?.Id;
 
         let url: URL;
 
@@ -108,6 +114,9 @@ export default class JellyfinClient {
             // Audio Logic
             url = new URL(`${this.serverUrl}/Audio/${itemId}/stream`);
             url.searchParams.set("api_key", this.apiKey);
+            if (mediaSourceId) {
+                url.searchParams.set("MediaSourceId", mediaSourceId);
+            }
 
             // Audio-specific parameters
             url.searchParams.set("static", "true");
@@ -118,6 +127,9 @@ export default class JellyfinClient {
             // Video Logic (Default)
             url = new URL(`${this.serverUrl}/Videos/${itemId}/stream`);
             url.searchParams.set("api_key", this.apiKey);
+            if (mediaSourceId) {
+                url.searchParams.set("MediaSourceId", mediaSourceId);
+            }
 
             // Default encoding settings
             url.searchParams.set("container", "mp4");
@@ -150,6 +162,14 @@ export default class JellyfinClient {
             headers: {
                 "User-Agent": JellyfinClient.APP_NAME,
             },
+            agent: (parsedUrl) => {
+                if (parsedUrl.protocol === 'http:') {
+                    return httpAgent;
+                } else {
+                    return httpsAgent;
+                }
+            },
+            timeout: 0, // Disable timeout to allow long transcoding pre-rolls
         });
 
         return response;
