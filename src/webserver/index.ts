@@ -101,7 +101,7 @@ app.post("/api/proxy/:id", async (req, res) => {
         proxyOptions.audioStreamIndex = audioStreamIndex;
     }
 
-    if (subtitleStreamIndex != null) {
+    if (subtitleStreamIndex != null && subtitleStreamIndex > 0) {
         proxyOptions.subtitleStreamIndex = subtitleStreamIndex;
         proxyOptions.subtitleMethod = SubtitleMethod.Encode;
     }
