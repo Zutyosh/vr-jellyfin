@@ -97,32 +97,54 @@ export default class JellyfinClient {
         return response;
     }
 
-    public async getVideoStream(itemId: string, options?: ProxyOptions) {
-        const url = new URL(`${this.serverUrl}/Videos/${itemId}/stream`);
-        url.searchParams.set("api_key", this.apiKey);
+    public async getStream(itemId: string, options?: ProxyOptions) {
+        // 1. Get Item Type to distinguish Audio vs Video
+        const item = await this.getItem(itemId);
+        const isAudio = item?.Type === 'Audio';
 
-        // Default encoding settings
-        url.searchParams.set("container", "mp4");
-        url.searchParams.set("audioCodec", "aac");
-        url.searchParams.set("videoCodec", "h264");
+        let url: URL;
 
-        // Override encoding settings if provided
-        for (const [k, v] of Object.entries(encodingSettings)) {
-            url.searchParams.set(k, v);
+        if (isAudio) {
+            // Audio Logic
+            url = new URL(`${this.serverUrl}/Audio/${itemId}/stream`);
+            url.searchParams.set("api_key", this.apiKey);
+
+            // Audio-specific parameters
+            url.searchParams.set("static", "true");
+            url.searchParams.set("container", "mp3");
+            url.searchParams.set("audioCodec", "mp3");
+            // Explicitly ensuring no video params are added
+        } else {
+            // Video Logic (Default)
+            url = new URL(`${this.serverUrl}/Videos/${itemId}/stream`);
+            url.searchParams.set("api_key", this.apiKey);
+
+            // Default encoding settings
+            url.searchParams.set("container", "mp4");
+            url.searchParams.set("audioCodec", "aac");
+            url.searchParams.set("videoCodec", "h264");
+
+            // Override encoding settings if provided
+            for (const [k, v] of Object.entries(encodingSettings)) {
+                url.searchParams.set(k, v);
+            }
+
+            if (options?.audioStreamIndex !== undefined) {
+                url.searchParams.set("AudioStreamIndex", options.audioStreamIndex.toString());
+            }
+
+            // Include subtitle parameters if provided
+            if (options?.subtitleStreamIndex !== undefined) {
+                url.searchParams.set("SubtitleMethod", options.subtitleMethod || SubtitleMethod.Encode);
+                // url.searchParams.set("SubtitleCodec", "srt"); // Removed to fix PGS subtitle crash
+                url.searchParams.set("SubtitleStreamIndex", options.subtitleStreamIndex.toString());
+            }
         }
 
-        if (options?.audioStreamIndex !== undefined) {
-            url.searchParams.set("AudioStreamIndex", options.audioStreamIndex.toString());
-        }
-
-        // Include subtitle parameters if provided
-        if (options?.subtitleStreamIndex !== undefined) {
-            url.searchParams.set("SubtitleMethod", options.subtitleMethod || SubtitleMethod.Encode);
-            url.searchParams.set("SubtitleCodec", "srt"); // Adjust the codec if necessary
-            url.searchParams.set("SubtitleStreamIndex", options.subtitleStreamIndex.toString());
-        }
-
-        console.log(`Requesting video stream from ${url.toString()}`);
+        // Log Redaction
+        const logUrl = new URL(url.toString());
+        logUrl.searchParams.set("api_key", "REDACTED");
+        console.log(`Requesting stream from ${logUrl.toString()}`);
 
         const response = await fetch(url.toString(), {
             headers: {

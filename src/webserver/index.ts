@@ -189,7 +189,7 @@ app.get("/v/:id", async (req, res) => {
     const options = proxy.options;
 
     try {
-        const response = await client.getVideoStream(itemId!, options);
+        const response = await client.getStream(itemId!, options);
         if (!response.ok || !response.body) {
             const errorText = await response.text();
             console.error(`Jellyfin stream fetch failed:`, {
@@ -208,8 +208,9 @@ app.get("/v/:id", async (req, res) => {
         }
         response.body.pipe(res);
         console.log(`Piping stream to client with options:`, options);
-    } catch (err) {
-        console.error('Error in /v/:id route:', err);
+    } catch (err: any) {
+        const errorMessage = (err.message || err.toString()).replace(/api_key=[a-zA-Z0-9]+/, "api_key=REDACTED");
+        console.error('Error in /v/:id route:', errorMessage);
         res.status(500).send('Internal server error while proxying video stream.');
     }
 });
