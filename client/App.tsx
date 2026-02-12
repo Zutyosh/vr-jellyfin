@@ -17,6 +17,9 @@ function App() {
     const [selectedItemForPlay, setSelectedItemForPlay] = useState<Item | null>(null);
     const [toast, setToast] = useState<{ show: boolean; message: string; type: ToastType }>({ show: false, message: '', type: 'success' });
 
+    // Simple in-memory cache for folder contents
+    const [itemCache, setItemCache] = useState<Record<string, Item[]>>({});
+
     const showToast = (message: string, type: ToastType = 'success') => {
         setToast({ show: true, message, type });
     };
@@ -27,10 +30,20 @@ function App() {
     }, []);
 
     const loadHome = async () => {
+        // Check cache for home/root views (using a specific key like 'root')
+        if (itemCache['root']) {
+            setItems(itemCache['root']);
+            setNavStack([]);
+            setCurrentView('grid');
+            setCurrentItem(null);
+            return;
+        }
+
         setLoading(true);
         try {
             const views = await api.getViews();
             setItems(views);
+            setItemCache((prev: Record<string, Item[]>) => ({ ...prev, 'root': views }));
             setNavStack([]);
             setCurrentView('grid');
             setCurrentItem(null);
@@ -69,11 +82,60 @@ function App() {
         const isFolder = item.Type === 'CollectionFolder' || item.Type === 'UserView' || item.Type === 'Series' || item.Type === 'Season' || item.Type === 'BoxSet' || item.Type === 'MusicAlbum';
 
         if (isFolder) {
+            // Check cache first
+            if (itemCache[item.Id]) {
+                const cachedChildren = itemCache[item.Id];
+
+                // UX: Single Track Album optimization (check from cache)
+                if (cachedChildren.length === 1 && cachedChildren[0].Type === 'Audio') {
+                    handleDirectCopy(cachedChildren[0]);
+                    return;
+                }
+
+                setNavStack(prev => [...prev, item]);
+
+                // Auto-skip "Season 1" logic (from cache)
+                if (cachedChildren.length === 1 && cachedChildren[0].Type === 'Season') {
+                    const season = cachedChildren[0];
+                    // recurse cache check for season? 
+                    // for simplicity, let's just trigger another navigate or let the standard flow handle it.
+                    // Actually, the original logic fetched recursively. 
+                    // Let's keep it simple: if cached, show it. If we need to dig deeper, we will click or handle it.
+                    // But to match original behavior of skipping:
+                    if (itemCache[season.Id]) {
+                        setItems(itemCache[season.Id]);
+                    } else {
+                        // Need to fetch season content if not in cache
+                        setLoading(true);
+                        try {
+                            const episodes = await api.getItems(season.Id);
+                            setItemCache(prev => ({ ...prev, [season.Id]: episodes }));
+                            setItems(episodes);
+                        } catch (e) { console.error(e); }
+                        finally { setLoading(false); }
+                    }
+                } else {
+                    setItems(cachedChildren);
+                }
+
+                if (item.Type === 'Series' || item.Type === 'Season' || item.Type === 'MusicAlbum') {
+                    setCurrentView('detail');
+                    setCurrentItem(item);
+                } else {
+                    setCurrentView('grid');
+                    setCurrentItem(null);
+                }
+                return;
+            }
+
             setLoading(true);
 
             try {
                 // Fetch children first to check for single-track optimization
                 const children = await api.getItems(item.Id);
+
+                // Update Cache
+                setItemCache(prev => ({ ...prev, [item.Id]: children }));
 
                 // UX: Single Track Album optimization
                 // If opening an album (or season?) that has exactly 1 Audio track, just play/copy it.
@@ -90,8 +152,14 @@ function App() {
                 // Auto-skip "Season 1" if it's the only season
                 if (children.length === 1 && children[0].Type === 'Season') {
                     const season = children[0];
-                    const episodes = await api.getItems(season.Id);
-                    setItems(episodes);
+                    // Check cache for season
+                    if (itemCache[season.Id]) {
+                        setItems(itemCache[season.Id]);
+                    } else {
+                        const episodes = await api.getItems(season.Id);
+                        setItemCache(prev => ({ ...prev, [season.Id]: episodes }));
+                        setItems(episodes);
+                    }
                 } else {
                     setItems(children);
                 }
@@ -130,23 +198,48 @@ function App() {
         newStack.pop(); // Remove current level
         setNavStack(newStack);
 
+        // If going back to home
+        if (newStack.length === 0) {
+            // Check cache for root
+            if (itemCache['root']) {
+                setItems(itemCache['root']);
+                setCurrentView('grid');
+                setCurrentItem(null);
+            } else {
+                loadHome();
+            }
+            return;
+        }
+
+        const parent = newStack[newStack.length - 1];
+
+        // Check cache for parent
+        if (itemCache[parent.Id]) {
+            setItems(itemCache[parent.Id]);
+            // Restore view state based on parent type
+            if (parent.Type === 'Series' || parent.Type === 'Season') {
+                setCurrentItem(parent);
+                setCurrentView('detail');
+            } else {
+                setCurrentItem(null);
+                setCurrentView('grid');
+            }
+            return;
+        }
+
         setLoading(true);
         try {
-            if (newStack.length === 0) {
-                await loadHome();
-            } else {
-                const parent = newStack[newStack.length - 1];
-                const children = await api.getItems(parent.Id);
-                setItems(children);
+            const children = await api.getItems(parent.Id);
+            setItems(children);
+            setItemCache(prev => ({ ...prev, [parent.Id]: children }));
 
-                // Restore view state based on parent type
-                if (parent.Type === 'Series' || parent.Type === 'Season') {
-                    setCurrentItem(parent);
-                    setCurrentView('detail');
-                } else {
-                    setCurrentItem(null);
-                    setCurrentView('grid');
-                }
+            // Restore view state based on parent type
+            if (parent.Type === 'Series' || parent.Type === 'Season') {
+                setCurrentItem(parent);
+                setCurrentView('detail');
+            } else {
+                setCurrentItem(null);
+                setCurrentView('grid');
             }
         } catch (e) {
             console.error(e);
