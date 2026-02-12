@@ -1,5 +1,5 @@
 {
-  "name": "vrchat-jellyfin",
+  "name": "vr-jellyfin",
   "version": "1.0.0",
   "description": "",
   "main": "dist/index.js",

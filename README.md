@@ -55,7 +55,7 @@ Docker Compose (recommended):
 
 ```yaml
 services:
-  vrchat-jellyfin:
+  vr-jellyfin:
     image: ghcr.io/zutyosh/vr-jellyfin:master
     container_name: vr-jellyfin
     restart: unless-stopped
@@ -76,7 +76,7 @@ Docker CLI:
 
 ```bash
 docker run -d \
---name vrchat-jellyfin \
+--name vr-jellyfin \
 --restart unless-stopped \
 -p 4000:4000 \
 -e JELLYFIN_HOST=<http[s]://URL> \

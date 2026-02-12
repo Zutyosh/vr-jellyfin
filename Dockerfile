@@ -15,4 +15,4 @@ RUN npm run build
 
 CMD ["npm", "run", "start:docker"]
 
-# docker build -t vrchat-jellyfin .
+# docker build -t vr-jellyfin .

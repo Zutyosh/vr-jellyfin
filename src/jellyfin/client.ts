@@ -157,6 +157,10 @@ export default class JellyfinClient {
         url.searchParams.set("PlaySessionId", proxyId);
         url.searchParams.set("DeviceId", `jellyfin-vrchat-${proxyId}`);
 
+        // FIX: Explicitly remove SubtitleCodec to allow FFmpeg to handle image-based subtitles (PGS/VOBSUB)
+        // If "srt" is passed, Jellyfin attempts conversion which fails for image formats.
+        url.searchParams.delete("SubtitleCodec");
+
         // Log Redaction
         const logUrl = new URL(url.toString());
         logUrl.searchParams.set("api_key", "REDACTED");
