@@ -46,6 +46,20 @@ export const api = {
         return res.json();
     },
 
+    searchItems: async (query: string, parentId?: string): Promise<Item[]> => {
+        const params = new URLSearchParams({
+            searchTerm: query,
+            Recursive: 'true',
+            IncludeItemTypes: 'Movie,Series,Episode,Audio'
+        });
+        if (parentId) {
+            params.append('ParentId', parentId);
+        }
+        const res = await fetch(`/api/items?${params.toString()}`);
+        if (!res.ok) throw new Error('Failed to search items');
+        return res.json();
+    },
+
     getItem: async (itemId: string): Promise<Item> => {
         const res = await fetch(`/api/item/${itemId}`);
         if (!res.ok) throw new Error('Failed to fetch item');

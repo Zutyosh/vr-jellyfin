@@ -4,6 +4,7 @@ import { api, Item } from './lib/api';
 import { MediaGrid } from './components/MediaGrid';
 import { DetailView } from './components/DetailView';
 import { PlayerModal } from './components/PlayerModal';
+import { SearchBar } from './components/SearchBar';
 import { Toast, ToastType } from './components/Toast';
 import { ArrowLeft } from 'lucide-react';
 import clsx from 'clsx';
@@ -247,34 +248,71 @@ function App() {
             setLoading(false);
         }
     };
+    const handleSearch = async (query: string) => {
+        setLoading(true);
+        try {
+            // Contextual Search: If inside a library, use its ID as parentId
+            const contextId = navStack.length > 0 ? navStack[0].Id : undefined;
+            const results = await api.searchItems(query, contextId);
+            setItems(results);
 
+            // Create a virtual item for search results to put in navStack
+            const searchItem: Item = {
+                Id: 'search-results',
+                Name: `Recherche: ${query}`,
+                Type: 'Search', // Virtual type
+            };
+
+            setNavStack(prev => [...prev, searchItem]);
+            setCurrentView('grid');
+            setCurrentItem(null);
+
+            // Optional: cache results? unique ID per search?
+            // For now, no caching for search results to keep it simple and fresh.
+        } catch (e) {
+            console.error(e);
+            showToast('Search failed', 'error');
+        } finally {
+            setLoading(false);
+        }
+    };
     // Breadcrumbs or simplified header
 
 
     return (
         <div className="min-h-screen bg-background font-sans">
             {/* Navbar */}
-            <nav className="fixed top-0 left-0 right-0 z-50 bg-black/50 backdrop-blur-md border-b border-white/5 h-16 flex items-center px-6">
-                <div className="flex items-center gap-4">
-                    {navStack.length > 0 && (
-                        <button
-                            onClick={handleBack}
-                            className="p-2 hover:bg-white/10 rounded-full transition-colors"
-                        >
-                            <ArrowLeft className="w-6 h-6" />
+            <nav className="fixed top-0 left-0 right-0 z-50 bg-black/50 backdrop-blur-md border-b border-white/5 h-16 flex items-center px-6 pointer-events-none">
+                <div className="flex items-center gap-4 w-full pointer-events-auto">
+                    <div className="flex items-center gap-4 flex-1">
+                        {navStack.length > 0 && (
+                            <button
+                                onClick={handleBack}
+                                className="p-2 hover:bg-white/10 rounded-full transition-colors"
+                            >
+                                <ArrowLeft className="w-6 h-6" />
+                            </button>
+                        )}
+                        <button onClick={loadHome} className={clsx("p-1.5 hover:bg-white/10 rounded-full transition-colors", navStack.length === 0 && "opacity-100", navStack.length > 0 && "opacity-70 hover:opacity-100")}>
+                            <img src="/icon_no_bg.png" className="w-8 h-8 object-contain" alt="Home" />
                         </button>
-                    )}
-                    <button onClick={loadHome} className={clsx("p-1.5 hover:bg-white/10 rounded-full transition-colors", navStack.length === 0 && "opacity-100", navStack.length > 0 && "opacity-70 hover:opacity-100")}>
-                        <img src="/icon_no_bg.png" className="w-8 h-8 object-contain" alt="Home" />
-                    </button>
-                    <h1 className="text-xl font-bold bg-gradient-to-r from-primary to-purple-500 bg-clip-text text-transparent">
-                        Jellyfin VR
-                    </h1>
-                    {navStack.length > 0 && (
-                        <span className="text-gray-400 text-sm border-l border-gray-700 pl-4 ml-2">
-                            {navStack.map(i => i.Name).join(' / ')}
-                        </span>
-                    )}
+                        <h1 className="text-xl font-bold bg-gradient-to-r from-primary to-purple-500 bg-clip-text text-transparent">
+                            Jellyfin VR
+                        </h1>
+                        {navStack.length > 0 && (
+                            <span className="text-gray-400 text-sm border-l border-gray-700 pl-4 ml-2">
+                                {navStack.map(i => i.Name).join(' / ')}
+                            </span>
+                        )}
+                    </div>
+
+                    {/* Search Bar - Always visible */}
+                    <div className="ml-auto pointer-events-auto">
+                        <SearchBar
+                            onSearch={handleSearch}
+                            placeholder={navStack.length > 0 ? `Search in ${navStack[0].Name}...` : "Search everywhere..."}
+                        />
+                    </div>
                 </div>
             </nav>
 

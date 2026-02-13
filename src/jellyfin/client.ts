@@ -61,21 +61,86 @@ export default class JellyfinClient {
         return viewsResponse.data.Items || [];
     }
 
-    public async getItems(parentId: string) {
-        const itemsResponse = await getItemsApi(this._api).getItems({
-            userId: this.userId!,
-            parentId: parentId,
-            fields: ["AlbumArtist", "Artists"] as any,
-        });
+    public async getItems(params: any = {}) {
+        const userId = this.userId;
+        if (!userId) throw new Error("User not authenticated");
 
-        const items = itemsResponse.data.Items || [];
-        // Filter out missing or virtual items
+        // 1. Base Query (Standard Navigation)
+        const query: any = {
+            userId: userId,
+            fields: ["AlbumArtist", "Artists", "ParentId"] as any, // Standard fields
+            enableImageTypes: "Primary,Backdrop,Banner,Thumb",
+            ...params
+        };
+
+        // Mapping safety: parentId (camelCase) -> ParentId (PascalCase) for SDK/API consistency
+        if (params.parentId) query.parentId = params.parentId;
+        if (params.ParentId) query.parentId = params.ParentId;
+
+        // Ensure recursive is false by default unless specified or searching
+        // SDK might default to false, but let's be explicit if not searching.
+
+        // 2. Conditional Logic "Search Mode"
+        if (params.searchTerm || params.SearchTerm) {
+            // Search Mode: We want to search deeply across types
+            query.searchTerm = params.searchTerm || params.SearchTerm;
+            query.recursive = true;
+            query.includeItemTypes = "Movie,Series,Episode,Audio";
+        } else {
+            // Navigation Mode: Do NOT force recursion. 
+            // Valid navigation might request Recursive=true explicitly (e.g. "Flatten" view), so we respect params if set.
+            if (params.Recursive !== undefined) {
+                query.recursive = params.Recursive === 'true' || params.Recursive === true;
+            }
+            // Do NOT set includeItemTypes here, so Folders/Seasons are returned.
+        }
+
+        const itemsResponse = await getItemsApi(this._api).getItems(query);
+        let items = itemsResponse.data.Items || [];
+
+        // 4. Filtering (Smart Filter ONLY in search)
+        if (query.searchTerm) {
+            items = this.smartFilter(items, query.searchTerm);
+        }
+
+        // Standard filtering (IsMissing, Virtual)
         return items.filter((item: any) => {
             if (item.LocationType === 'Virtual') return false;
             // SDK might not have IsMissing on BaseItemDto strictly typed depending on version, check existence
             if (item.IsMissing === true) return false;
             return true;
         });
+    }
+
+    private smartFilter(items: any[], term: string): any[] {
+        if (!term) return items;
+        const lowerTerm = term.toLowerCase();
+
+        // Check for non-ASCII characters (e.g. Japanese, emojis, etc.)
+        // If present, fallback to simple inclusion check
+        // Regex: [^\x00-\x7F] matches any character that is not ASCII
+        if (/[^\x00-\x7F]/.test(term)) {
+            return items.filter(item => item.Name?.toLowerCase().includes(lowerTerm));
+        }
+
+        // Strict Alpha-Numeric Filtering
+        // We want to match "Lain" but not "Villainess"
+        // Look for word boundaries or non-alphanumeric separators
+
+        const escapedTerm = this.escapeRegExp(term);
+        // Regex explanation:
+        // (?:^|[^a-z0-9]) : Match start of string OR a non-alphanumeric char (e.g. space, dot, colon)
+        // term : The search term
+        // (?:$|[^a-z0-9]) : Match end of string OR a non-alphanumeric char
+        const regex = new RegExp(`(?:^|[^a-z0-9])${escapedTerm}(?:$|[^a-z0-9])`, 'i');
+
+        return items.filter(item => {
+            return regex.test(item.Name || '');
+        });
+    }
+
+    private escapeRegExp(string: string) {
+        return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); // $& means the whole matched string
     }
 
     public async getItem(itemId: string) {

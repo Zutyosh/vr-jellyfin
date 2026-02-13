@@ -10,11 +10,13 @@ if (fs.existsSync(axiosPackagePath)) {
         let modified = false;
         if (!pkg.exports['./lib/core/buildFullPath']) {
             pkg.exports['./lib/core/buildFullPath'] = './lib/core/buildFullPath.js';
+            pkg.exports['./lib/core/buildFullPath.js'] = './lib/core/buildFullPath.js'; // Add explicit .js
             modified = true;
         }
         // Also add buildURL just in case, as it appeared in grep
         if (!pkg.exports['./lib/helpers/buildURL']) {
             pkg.exports['./lib/helpers/buildURL'] = './lib/helpers/buildURL.js';
+            pkg.exports['./lib/helpers/buildURL.js'] = './lib/helpers/buildURL.js'; // Add explicit .js
             modified = true;
         }
 

@@ -29,14 +29,12 @@ app.get("/api/views", async (req, res) => {
     }
 });
 
-// Get Items (Children of a folder)
+// Get Items (Children of a folder or Search)
 app.get("/api/items", async (req, res) => {
-    const parentId = req.query.parentId as string;
-    if (!parentId) {
-        return res.status(400).json({ error: "parentId is required" });
-    }
     try {
-        const items = await client.getItems(parentId);
+        // Pass everything in query to client.getItems
+        // This includes parentId, searchTerm, Recursive, IncludeItemTypes, etc.
+        const items = await client.getItems(req.query);
         res.json(items);
     } catch (error) {
         console.error("Error fetching items:", error);
@@ -137,7 +135,8 @@ app.get("/api/playlist/:id.m3u", async (req, res) => {
 
     try {
         // 1. Get album tracks
-        const tracks = await client.getItems(albumId);
+        // New signature expects params object, pass ParentId
+        const tracks = await client.getItems({ ParentId: albumId });
 
         // Filter for audio only (just in case) and sort by IndexNumber
         const audioTracks = tracks
