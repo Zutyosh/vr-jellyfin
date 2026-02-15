@@ -4,6 +4,9 @@ LABEL maintainer="gurrrrrrett3 <gart@gart.sh>"
 LABEL version="1.0"
 LABEL description="a Jellyfin client for VRChat."
 
+# Install FFmpeg for HLS audio segmentation
+RUN apk add --no-cache ffmpeg
+
 WORKDIR /app
 
 COPY package.json /app/package.json
