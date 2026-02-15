@@ -130,7 +130,7 @@ app.get("/api/streams/:itemId", async (req, res) => {
 });
 
 // Download Playlist (M3U)
-app.get("/api/playlist/:id.m3u", async (req, res) => {
+app.get("/v/playlist/:id.m3u", async (req, res) => {
     const albumId = req.params.id;
 
     try {
