@@ -5,7 +5,9 @@
     "incremental": true,
     "target": "ES2020",
     "module": "commonjs",
-    "rootDir": "./src",
+    "typeRoots": [
+      "./node_modules/@types"
+    ],
     "moduleResolution": "Node",
     "resolveJsonModule": true,
     "allowJs": true,
@@ -21,8 +23,27 @@
     "alwaysStrict": true,
     "skipLibCheck": true,
     "experimentalDecorators": true,
+<<<<<<< Updated upstream
     "emitDecoratorMetadata": true
   },
   "include": ["src"],
   "exclude": ["node_modules", "./dist/**/*", "../dist"],
 }
+=======
+    "emitDecoratorMetadata": true,
+    "jsx": "react-jsx",
+    "types": [
+      "node"
+    ]
+  },
+  "include": [
+    "src",
+    "vite.config.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "./dist/**/*",
+    "../dist"
+  ],
+}
+>>>>>>> Stashed changes

@@ -10,17 +10,23 @@ a Jellyfin client designed for VRChat
 >
 > While this project is functional, it is not yet complete. The end goal is to have a link that can be pasted into the vrchat client, then use the jellyfin cast feature to control the player like a chromecast. This is not yet implemented, and the current implementation is a workaround.
 
+<<<<<<< Updated upstream
 handles requesting media from jellyfin in a format that can be played in vrchat, as well as proxying urls to bypass the risk of sharing a jellyfin api key
+=======
+> Handles requesting media from jellyfin in a format that can be played in vrchat, as well as proxying urls to bypass the risk of sharing a jellyfin api key
+>
+> This is a forked repo from https://github.com/orcachillin/vrchat-jellyfin, please check out the original repo for the original code and support the original author <3
+>>>>>>> Stashed changes
 
 ## Tips
 - If the player has a switch between **Video** and **Stream**, use **Stream**
 - I've personally had better luck with the Unity video player over the AVPro one, but both should work
-- If you change the video encoding settings, 720p (the default) works best for most devices. I wouldn't go above 1080p unless you have a smaller group or high upload bandwitdh.
+- If you change the video encoding settings, 720p (the default) works best for most devices. I wouldn't go above 1080p unless you have a smaller group or high upload bandwidth.
 
 ## Supported Platforms
 
 - [x] VRChat
-- [x] Chillout VR
+- [x] ChilloutVR
 - [x] Resonite
 
 *These are just platforms that have been tested, feel free to PR with other platforms if you've tested on them*
@@ -46,7 +52,7 @@ services:
       JELLYFIN_HOST: <http[s]://URL>
       JELLYFIN_USERNAME: <USERNAME>
       JELLYFIN_PASSWORD: <PASSWORD>
-      AUDIO_BITRATE: 128000
+      AUDIO_BITRATE: 192000
       VIDEO_BITRATE: 3000000
       MAX_AUDIO_CHANNELS: 2
       MAX_HEIGHT: 720
@@ -63,11 +69,19 @@ docker run -d \
 -e JELLYFIN_HOST=<http[s]://URL> \
 -e JELLYFIN_USERNAME=<USERNAME> \
 -e JELLYFIN_PASSWORD=<PASSWORD> \
+<<<<<<< Updated upstream
 -e AUDIO_BITRATE: 128000 \
 -e VIDEO_BITRATE: 3000000 \
 -e MAX_HEIGHT: 720 \
 -e MAX_WIDTH: 1280 \
 ghcr.io/gurrrrrrett3/vrchat-jellyfin:master
+=======
+-e AUDIO_BITRATE=192000 \
+-e VIDEO_BITRATE=3000000 \
+-e MAX_HEIGHT=720 \
+-e MAX_WIDTH=1280 \
+ghcr.io/zutyosh/vr-jellyfin:master
+>>>>>>> Stashed changes
 ```
 
 ## Installation (No Docker)
@@ -81,13 +95,19 @@ npm run build
 
 Rename the `.env.example` file to `.env` and fill in the required fields.  
 
-It's reccommended to use a process manager like pm2 to keep it running:
+It's recommended to use a process manager like pm2 to keep it running:
 
 ```bash
 pm2 start dist/index.js --name vrc-jellyfin
 pm2 save
 ```
 Make sure to do `pm2 startup` if you haven't already so it autostarts
+
+## Authentication
+
+By default the web interface has no authentication. For production deployments, you can set `AUTH_USERNAME` and `AUTH_PASSWORD` environment variables to enable basic auth on the web interface. Stream URLs (`/v/...`) remain unauthenticated so VR players can access them.
+
+Alternatively, use a reverse proxy like Caddy or Traefik with authentication (see below).
 
 ## Sample Caddy config
 
@@ -131,7 +151,7 @@ media.example.com {
 
 ## Usage
 
-Go to the web interface (default port is 4000), select media, and copy the link. Paste the link into the vrchat client to play the media.
+Go to the web interface (default port is 4000), select media, and copy the link. Paste the link into the VR client to play the media.
 
 ## Progress
 
@@ -141,6 +161,10 @@ Go to the web interface (default port is 4000), select media, and copy the link.
 - [ ] Audio track selection
 - [x] Subtitle track selection
 - [x] Temp Web interface
+- [x] Optional Basic Authentication
+- [x] Security Hardening (Rate limiting, Headers, Input validation)
+- [x] Auto-reauthentication & Resilience
+- [x] Enhanced Search (Artists, Albums) & Navigation
 - [ ] Support for the jellyfin cast api
 - [ ] Video Stream generation (splash screen with instructions, etc)
 - [x] Docker

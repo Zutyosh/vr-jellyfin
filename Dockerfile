@@ -6,13 +6,18 @@ LABEL description="a Jellyfin client for VRChat."
 
 WORKDIR /app
 
-COPY package.json /app/package.json
-COPY package-lock.json /app/package-lock.json
-COPY . /app
+COPY package.json package-lock.json ./
+COPY scripts/ scripts/
+RUN npm ci
 
-RUN npm install
+COPY . .
 RUN npm run build
 
-CMD ["npm", "run", "start:docker"]
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+USER appuser
 
+<<<<<<< Updated upstream
 # docker build -t vrchat-jellyfin .
+=======
+CMD ["npm", "start"]
+>>>>>>> Stashed changes
