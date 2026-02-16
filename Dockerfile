@@ -16,8 +16,4 @@ RUN npm run build
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 USER appuser
 
-<<<<<<< Updated upstream
-# docker build -t vrchat-jellyfin .
-=======
-CMD ["npm", "start"]
->>>>>>> Stashed changes
+CMD ["npm", "run", "start:docker"]

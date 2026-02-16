@@ -10,13 +10,9 @@ a Jellyfin client designed for VRChat
 >
 > While this project is functional, it is not yet complete. The end goal is to have a link that can be pasted into the vrchat client, then use the jellyfin cast feature to control the player like a chromecast. This is not yet implemented, and the current implementation is a workaround.
 
-<<<<<<< Updated upstream
-handles requesting media from jellyfin in a format that can be played in vrchat, as well as proxying urls to bypass the risk of sharing a jellyfin api key
-=======
 > Handles requesting media from jellyfin in a format that can be played in vrchat, as well as proxying urls to bypass the risk of sharing a jellyfin api key
 >
 > This is a forked repo from https://github.com/orcachillin/vrchat-jellyfin, please check out the original repo for the original code and support the original author <3
->>>>>>> Stashed changes
 
 ## Tips
 - If the player has a switch between **Video** and **Stream**, use **Stream**
@@ -53,10 +49,10 @@ services:
       JELLYFIN_USERNAME: <USERNAME>
       JELLYFIN_PASSWORD: <PASSWORD>
       AUDIO_BITRATE: 192000
-      VIDEO_BITRATE: 3000000
+      VIDEO_BITRATE: 5000000
       MAX_AUDIO_CHANNELS: 2
-      MAX_HEIGHT: 720
-      MAX_WIDTH: 1280
+      MAX_HEIGHT: 1080
+      MAX_WIDTH: 1920
 ```
 
 Docker CLI:
@@ -69,19 +65,11 @@ docker run -d \
 -e JELLYFIN_HOST=<http[s]://URL> \
 -e JELLYFIN_USERNAME=<USERNAME> \
 -e JELLYFIN_PASSWORD=<PASSWORD> \
-<<<<<<< Updated upstream
--e AUDIO_BITRATE: 128000 \
--e VIDEO_BITRATE: 3000000 \
--e MAX_HEIGHT: 720 \
--e MAX_WIDTH: 1280 \
-ghcr.io/gurrrrrrett3/vrchat-jellyfin:master
-=======
 -e AUDIO_BITRATE=192000 \
--e VIDEO_BITRATE=3000000 \
--e MAX_HEIGHT=720 \
--e MAX_WIDTH=1280 \
-ghcr.io/zutyosh/vr-jellyfin:master
->>>>>>> Stashed changes
+-e VIDEO_BITRATE=5000000 \
+-e MAX_HEIGHT=1080 \
+-e MAX_WIDTH=1920 \
+ghcr.io/gurrrrrrett3/vrchat-jellyfin:master
 ```
 
 ## Installation (No Docker)
@@ -157,8 +145,8 @@ Go to the web interface (default port is 4000), select media, and copy the link.
 
 - [x] Jellyfin proxy 
 - [x] Transcoding
-- [ ] Subtitle Baking
-- [ ] Audio track selection
+- [x] Subtitle Baking
+- [x] Audio track selection
 - [x] Subtitle track selection
 - [x] Temp Web interface
 - [x] Optional Basic Authentication
