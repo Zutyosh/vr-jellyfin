@@ -2,10 +2,29 @@
 
 import express from "express";
 import http from "http";
+import fs from "fs";
+import { Readable } from "stream";
+import path from "path";
+import ffmpeg from "fluent-ffmpeg";
+import ffprobeStatic from "ffprobe-static";
+import ffmpegStatic from "ffmpeg-static";
 import ProxyManager from "../jellyfin/proxy/proxyManager";
 import { client } from "../jellyfin";
 import { ProxyOptions, SubtitleMethod } from "../jellyfin/proxy/proxy";
-import path from "path";
+
+// Set FFmpeg and FFprobe paths for fluent-ffmpeg
+if (ffmpegStatic) ffmpeg.setFfmpegPath(ffmpegStatic);
+ffmpeg.setFfprobePath(ffprobeStatic.path);
+
+// HLS Configuration
+const HLS_CACHE_DIR = path.join(process.cwd(), 'cache', 'hls');
+const HLS_SEGMENT_DURATION = 10; // seconds per segment
+const FFMPEG_TIMEOUT_MS = 2 * 60 * 1000; // 2 minutes max for segmentation
+const CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
+const CACHE_CLEANUP_INTERVAL_MS = 60 * 60 * 1000; // every hour
+
+// Lock mechanism to prevent race conditions on concurrent segmentation requests
+const segmentationLocks = new Map<string, Promise<void>>();
 
 const app = express();
 
@@ -129,50 +148,283 @@ app.get("/api/streams/:itemId", async (req, res) => {
     }
 });
 
-// Download Playlist (M3U)
-app.get("/v/playlist/:id.m3u", async (req, res) => {
-    const albumId = req.params.id;
+// ========================
+// HLS Streaming Routes
+// ========================
+
+// HLS Master Playlist – lists all tracks in an album
+app.get('/playlist/:albumId.m3u8', async (req, res) => {
+    const { albumId } = req.params;
+
+    // Validate albumId format (Jellyfin UUIDs are 32 hex chars)
+    if (!/^[a-f0-9]{32}$/i.test(albumId)) {
+        return res.status(400).json({ error: 'Invalid album ID' });
+    }
 
     try {
-        // 1. Get album tracks
-        // New signature expects params object, pass ParentId
         const tracks = await client.getItems({ ParentId: albumId });
 
-        // Filter for audio only (just in case) and sort by IndexNumber
         const audioTracks = tracks
-            .filter(t => t.Type === 'Audio' && t.Id) // Ensure Id exists
+            .filter(t => t.Type === 'Audio' && t.Id)
             .sort((a, b) => (a.IndexNumber || 0) - (b.IndexNumber || 0));
 
         if (audioTracks.length === 0) {
-            return res.status(404).send("#EXTM3U\n# No tracks found");
+            return res.status(404).json({ error: 'No audio tracks found' });
         }
 
-        // 2. Generate M3U Content
-        let m3uContent = "#EXTM3U\n";
-        const host = req.get('host');
-        const protocol = req.protocol;
+        // Build absolute base URL (force HTTPS for non-localhost deployments)
+        const host = req.get('host') || 'localhost:4000';
+        const protocol = (host === 'localhost' || host.startsWith('localhost:'))
+            ? req.protocol
+            : 'https';
+        const baseUrl = `${protocol}://${host}`;
+
+        // Build HLS Master Playlist (RFC 8216)
+        let playlist = '#EXTM3U\n';
+        playlist += '#EXT-X-VERSION:3\n';
+        playlist += '#EXT-X-PLAYLIST-TYPE:VOD\n\n';
 
         for (const track of audioTracks) {
-            if (!track.Id) continue; // Should be handled by filter but for TS safety
-            const proxy = ProxyManager.createProxy(track.Id);
-
-            const durationSec = track.RunTimeTicks ? Math.floor(track.RunTimeTicks / 10000000) : -1;
+            const durationSec = track.RunTimeTicks
+                ? Math.ceil(track.RunTimeTicks / 10_000_000)
+                : 0;
             const title = `${track.Artists?.join(', ') || 'Unknown'} - ${track.Name}`;
-
-            m3uContent += `#EXTINF:${durationSec},${title}\n`;
-            m3uContent += `${protocol}://${host}/v/${proxy.id}\n`;
+            playlist += `#EXTINF:${durationSec},${title}\n`;
+            playlist += `${baseUrl}/playlist/track/${track.Id}/index.m3u8\n`;
         }
 
-        // 3. Send Response
-        res.setHeader('Content-Type', 'application/x-mpegurl');
-        res.setHeader('Content-Disposition', `attachment; filename="playlist_${albumId}.m3u"`);
-        res.send(m3uContent);
+        playlist += '#EXT-X-ENDLIST\n';
 
+        res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.send(playlist);
     } catch (error) {
-        console.error("Error generating playlist:", error);
-        res.status(500).send("Failed to generate playlist");
+        console.error('[HLS] Error generating master playlist:', error);
+        res.status(500).json({ error: 'Failed to generate playlist' });
     }
 });
+
+
+// HLS Track Playlist – generates segments for a single track via FFmpeg
+app.get('/playlist/track/:trackId/index.m3u8', async (req, res) => {
+    const { trackId } = req.params;
+
+    // Validate trackId format
+    if (!/^[a-f0-9]{32}$/i.test(trackId)) {
+        return res.status(400).json({ error: 'Invalid track ID' });
+    }
+
+    const cacheDir = path.join(HLS_CACHE_DIR, trackId);
+    const playlistPath = path.join(cacheDir, 'index.m3u8');
+
+    // Build absolute base URL for segment references
+    const host = req.get('host') || 'localhost:4000';
+    const protocol = (host === 'localhost' || host.startsWith('localhost:'))
+        ? req.protocol
+        : 'https';
+    const baseUrl = `${protocol}://${host}`;
+
+    // Helper: read FFmpeg-generated M3U8 and rewrite relative segment paths to absolute URLs
+    const serveRewrittenPlaylist = () => {
+        let content = fs.readFileSync(playlistPath, 'utf-8');
+        // Replace relative segment filenames (e.g. "segment000.ts") with absolute URLs
+        content = content.replace(
+            /^(segment\d{3}\.ts)$/gm,
+            `${baseUrl}/playlist/track/${trackId}/$1`
+        );
+        res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.send(content);
+    };
+
+    // 1. Cache hit – serve immediately (with rewritten URLs)
+    if (fs.existsSync(playlistPath)) {
+        return serveRewrittenPlaylist();
+    }
+
+    // 2. Another request is already generating this track – wait for it
+    if (segmentationLocks.has(trackId)) {
+        try {
+            await segmentationLocks.get(trackId);
+            if (fs.existsSync(playlistPath)) {
+                return serveRewrittenPlaylist();
+            }
+            return res.status(500).json({ error: 'Segmentation completed but playlist not found' });
+        } catch {
+            return res.status(500).json({ error: 'Segmentation failed (waited on lock)' });
+        }
+    }
+
+    // 3. Generate segments with FFmpeg
+    try {
+        // Create cache directory
+        fs.mkdirSync(cacheDir, { recursive: true });
+
+        // Get the Jellyfin audio stream URL
+        const jellyfinUrl = client.serverUrl;
+        const apiKey = client.apiKey;
+        const streamUrl = `${jellyfinUrl}/Audio/${trackId}/stream?api_key=${apiKey}&static=true`;
+
+        console.log(`[HLS] Starting segmentation for track ${trackId}`);
+
+        const segmentationPromise = new Promise<void>(async (resolve, reject) => {
+            let timedOut = false;
+
+            // Timeout protection
+            const timeout = setTimeout(() => {
+                timedOut = true;
+                console.error(`[FFmpeg] Timeout for track ${trackId} after ${FFMPEG_TIMEOUT_MS}ms`);
+                // Clean up partial files
+                if (fs.existsSync(cacheDir)) {
+                    fs.rmSync(cacheDir, { recursive: true, force: true });
+                }
+                reject(new Error('FFmpeg timeout'));
+            }, FFMPEG_TIMEOUT_MS);
+
+            try {
+                // Fetch audio stream via Node.js (bypasses ffmpeg-static HTTPS/TLS issues)
+                const fetchResponse = await fetch(streamUrl, {
+                    headers: { 'User-Agent': 'vr-jellyfin HLS Proxy' },
+                    // @ts-ignore - timeout option
+                    timeout: 60_000,
+                });
+
+                if (!fetchResponse.ok || !fetchResponse.body) {
+                    clearTimeout(timeout);
+                    reject(new Error(`Jellyfin stream fetch failed: ${fetchResponse.status} ${fetchResponse.statusText}`));
+                    return;
+                }
+
+                console.log(`[HLS] Stream fetched for ${trackId}, piping to FFmpeg via stdin`);
+
+                // Convert Web ReadableStream to Node.js Readable for fluent-ffmpeg
+                const nodeStream = Readable.fromWeb(fetchResponse.body as any);
+
+                // Pipe fetched stream to FFmpeg stdin instead of passing URL directly
+                ffmpeg()
+                    .input(nodeStream)
+                    .inputOptions([
+                        '-probesize', '5000000',         // 5MB probe for format detection on pipe
+                        '-analyzeduration', '10000000',  // 10s analysis window
+                    ])
+                    .outputOptions([
+                        '-vn',              // Strip embedded album art / cover images
+                        '-c:a', 'aac',
+                        '-b:a', '192k',
+                        '-ac', '2',
+                        '-f', 'hls',
+                        '-hls_time', String(HLS_SEGMENT_DURATION),
+                        '-hls_list_size', '0',
+                        '-hls_segment_filename', path.join(cacheDir, 'segment%03d.ts'),
+                    ])
+                    .output(playlistPath)
+                    .on('start', (cmdline) => {
+                        console.log(`[FFmpeg] Command: ${cmdline}`);
+                    })
+                    .on('progress', (progress) => {
+                        if (progress.percent) {
+                            console.log(`[FFmpeg] ${trackId}: ${Math.round(progress.percent)}%`);
+                        }
+                    })
+                    .on('end', () => {
+                        clearTimeout(timeout);
+                        if (!timedOut) {
+                            console.log(`[HLS] Segmentation complete for track ${trackId}`);
+                            resolve();
+                        }
+                    })
+                    .on('error', (err: Error, _stdout: string, stderr: string) => {
+                        clearTimeout(timeout);
+                        if (!timedOut) {
+                            console.error(`[FFmpeg] Error for track ${trackId}:`, err.message);
+                            console.error(`[FFmpeg] stderr:`, stderr);
+                            if (fs.existsSync(cacheDir)) {
+                                fs.rmSync(cacheDir, { recursive: true, force: true });
+                            }
+                            reject(err);
+                        }
+                    })
+                    .run();
+            } catch (fetchErr: any) {
+                clearTimeout(timeout);
+                console.error(`[HLS] Failed to fetch stream for ${trackId}:`, fetchErr.message);
+                reject(fetchErr);
+            }
+        });
+
+        segmentationLocks.set(trackId, segmentationPromise);
+
+        await segmentationPromise;
+        segmentationLocks.delete(trackId);
+
+        serveRewrittenPlaylist();
+    } catch (error: any) {
+        segmentationLocks.delete(trackId);
+        console.error('[HLS] Segmentation error:', error.message || error);
+        res.status(500).json({ error: 'Segmentation failed', details: error.message });
+    }
+});
+
+
+// HLS Segment Serving – serves individual .ts segment files
+app.get('/playlist/track/:trackId/:segment', (req, res) => {
+    const { trackId, segment } = req.params;
+
+    // Path traversal protection: validate trackId (Jellyfin UUID)
+    if (!/^[a-f0-9]{32}$/i.test(trackId)) {
+        return res.status(400).json({ error: 'Invalid track ID' });
+    }
+
+    // Validate segment filename: must match segmentNNN.ts
+    if (!/^segment\d{3}\.ts$/.test(segment)) {
+        return res.status(400).json({ error: 'Invalid segment name' });
+    }
+
+    const segmentPath = path.join(HLS_CACHE_DIR, trackId, segment);
+
+    // Double-check: resolved path must stay within cache root
+    const resolvedPath = path.resolve(segmentPath);
+    const resolvedCacheRoot = path.resolve(HLS_CACHE_DIR);
+    if (!resolvedPath.startsWith(resolvedCacheRoot)) {
+        return res.status(403).json({ error: 'Access denied' });
+    }
+
+    if (fs.existsSync(segmentPath)) {
+        res.setHeader('Content-Type', 'video/mp2t');
+        res.setHeader('Cache-Control', 'public, max-age=86400');
+        res.sendFile(resolvedPath);
+    } else {
+        res.status(404).json({ error: 'Segment not found' });
+    }
+});
+
+
+// HLS Cache Cleanup – removes segments older than 24 hours
+function cleanupHlsCache() {
+    if (!fs.existsSync(HLS_CACHE_DIR)) return;
+
+    const now = Date.now();
+    try {
+        const trackDirs = fs.readdirSync(HLS_CACHE_DIR);
+        for (const trackId of trackDirs) {
+            const trackDir = path.join(HLS_CACHE_DIR, trackId);
+            try {
+                const stat = fs.statSync(trackDir);
+                if (stat.isDirectory() && (now - stat.mtimeMs > CACHE_MAX_AGE_MS)) {
+                    fs.rmSync(trackDir, { recursive: true, force: true });
+                    console.log(`[HLS Cache] Cleaned track ${trackId}`);
+                }
+            } catch {
+                // Ignore individual errors during cleanup
+            }
+        }
+    } catch (err) {
+        console.error('[HLS Cache] Cleanup error:', err);
+    }
+}
+
+// Run cache cleanup on an interval (no extra dependency needed)
+setInterval(cleanupHlsCache, CACHE_CLEANUP_INTERVAL_MS);
 
 
 // Video Stream Endpoint (The actual proxy)
@@ -218,7 +470,7 @@ app.get("/v/:id", async (req, res) => {
 // Fallback to index.html for SPA (must be last)
 app.get("*", (req, res) => {
     // Avoid intercepting API calls or specific routes
-    if (req.path.startsWith('/api') || req.path.startsWith('/v/')) {
+    if (req.path.startsWith('/api') || req.path.startsWith('/v/') || req.path.startsWith('/playlist/')) {
         return res.status(404).send("Not Found");
     }
     res.sendFile("index.html", { root: "dist/client" });

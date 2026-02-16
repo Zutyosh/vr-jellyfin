@@ -87,6 +87,6 @@ export const api = {
     },
 
     getPlaylistUrl: (itemId: string) => {
-        return `${window.location.origin}/v/playlist/${itemId}.m3u`;
+        return `${window.location.origin}/playlist/${itemId}.m3u8`;
     }
 };

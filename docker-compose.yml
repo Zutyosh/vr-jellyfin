@@ -25,9 +25,14 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+    volumes:
+      - hls-cache:/app/cache/hls
     labels:
-      # Note: For Traefik deployments, add these labels to protect the interface but not video streams:
-      # - "traefik.http.routers.vr-jellyfin.rule=Host(`your-domain.com`) && !PathPrefix(`/v/`)"
+      # Note: For Traefik deployments, add these labels to protect the interface but not video/HLS streams:
+      # - "traefik.http.routers.vr-jellyfin.rule=Host(`your-domain.com`) && !PathPrefix(`/v/`) && !PathPrefix(`/playlist/`)"
       # - "traefik.http.routers.vr-jellyfin.middlewares=auth@file,secureHeaders@file"
-      # - "traefik.http.routers.vr-jellyfin-video.rule=Host(`your-domain.com`) && PathPrefix(`/v/`)"
+      # - "traefik.http.routers.vr-jellyfin-video.rule=Host(`your-domain.com`) && (PathPrefix(`/v/`) || PathPrefix(`/playlist/`))"
       # - "traefik.http.routers.vr-jellyfin-video.middlewares=secureHeaders@file"
+
+volumes:
+  hls-cache:

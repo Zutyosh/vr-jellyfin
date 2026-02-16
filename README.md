@@ -134,9 +134,10 @@ media.example.com {
         frame-ancestors 'none';
         "
 
-        # Videos don't require sign-in, just the interface
+        # Videos and playlists don't require sign-in, just the interface
         @auth {
                 not path /v/*
+                not path /playlist/*
         }
 
         basicauth @auth {
