@@ -7,6 +7,8 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "build": "tsc && vite build",
     "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js",
+    "dev:watch": "tsc --watch",
     "start:docker": "nodemon dist/index.js",
     "postinstall": "node scripts/fix-axios.js"
   },
@@ -35,6 +37,7 @@
     "@types/ffprobe-static": "^2.0.3",
     "@types/fluent-ffmpeg": "^2.1.24",
     "@types/http-proxy": "^1.17.14",
+    "@types/node": "^22.0.0",
     "@types/node-fetch": "^2.6.9",
     "@types/react": "^18.2.48",
     "@types/react-dom": "^18.2.18",

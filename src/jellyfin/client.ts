@@ -1,13 +1,12 @@
-// src/jellyfin/client.ts
-
 import { Api, Jellyfin } from "@jellyfin/sdk";
 import { getUserViewsApi } from "@jellyfin/sdk/lib/utils/api/user-views-api";
 import { getItemsApi } from "@jellyfin/sdk/lib/utils/api/items-api";
 import fetch from "node-fetch";
 import { resolve } from "path";
-import { ProxyOptions, SubtitleMethod } from "./proxy/proxy"; // Added import
+import { ProxyOptions, SubtitleMethod } from "./proxy/proxy";
 import * as http from "http";
 import * as https from "https";
+import { log } from "../utils/logger";
 
 const httpAgent = new http.Agent({ keepAlive: true });
 const httpsAgent = new https.Agent({ keepAlive: true });
@@ -22,8 +21,11 @@ export default class JellyfinClient {
 
     public userId?: string;
 
-    constructor(public serverUrl: string, private username: string, private password: string) {
-        // Ensure the serverUrl does not end with a slash
+    constructor(
+        public serverUrl: string,
+        private username: string,
+        private password: string
+    ) {
         this.serverUrl = serverUrl.replace(/\/+$/, "");
 
         this._sdk = new Jellyfin({
@@ -32,7 +34,7 @@ export default class JellyfinClient {
                 version: process.env.npm_package_version || "0.0.0",
             },
             deviceInfo: {
-                name: `${JellyfinClient.APP_NAME} ${process.env.npm_package_version || "0.0.0"} | ${process.platform} | ${process.arch}`,
+                name: `${JellyfinClient.APP_NAME} | ${process.platform} | ${process.arch}`,
                 id: "jellyfin-vrchat",
             },
         });
@@ -44,71 +46,115 @@ export default class JellyfinClient {
         return this._api.accessToken;
     }
 
+    // Shared header set for all outgoing Jellyfin requests
+    private get authHeaders() {
+        return {
+            "User-Agent": JellyfinClient.APP_NAME,
+            "X-Emby-Token": this.apiKey,
+        };
+    }
+
     public async authenticate() {
-        const auth = await this._api.authenticateUserByName(this.username, this.password).catch((e) => {
-            console.error("Failed to authenticate with Jellyfin, check your username and password", e);
-            process.exit(1);
+        try {
+            const auth = await this._api.authenticateUserByName(this.username, this.password);
+            this.userId = auth.data.User?.Id;
+            return auth.status === 200;
+        } catch (e) {
+            log.error("Failed to authenticate with Jellyfin", e);
+            return false;
+        }
+    }
+
+    // Generic wrapper for SDK calls (Axios) — catches 401/403, re-authenticates, retries
+    private async sdkCall<T>(operation: () => Promise<T>): Promise<T> {
+        try {
+            return await operation();
+        } catch (error: any) {
+            if (error?.response?.status === 401 || error?.response?.status === 403) {
+                log.warn("Jellyfin auth error (SDK), attempting re-authentication...");
+                const success = await this.authenticate();
+                if (success) {
+                    log.info("Re-authentication successful, retrying operation...");
+                    return await operation();
+                } else {
+                    log.error("Re-authentication failed.");
+                }
+            }
+            throw error;
+        }
+    }
+
+    // Generic wrapper for raw fetch calls — catches 401/403, re-authenticates, retries
+    private async fetchCall(url: string | URL, options: any = {}): Promise<any> {
+        let response = await fetch(url.toString(), {
+            ...options,
+            headers: { ...options.headers, ...this.authHeaders }
         });
 
-        this.userId = auth.data.User?.Id;
-        return auth.status == 200;
+        if (response.status === 401 || response.status === 403) {
+            log.warn(`Jellyfin auth error (Fetch ${response.status}), attempting re-authentication...`);
+            const success = await this.authenticate();
+
+            if (success) {
+                log.info("Re-authentication successful, retrying fetch...");
+                response = await fetch(url.toString(), {
+                    ...options,
+                    headers: { ...options.headers, ...this.authHeaders }
+                });
+            } else {
+                log.error("Re-authentication failed.");
+            }
+        }
+
+        return response;
     }
 
     public async getUserViews() {
-        const viewsResponse = await getUserViewsApi(this._api).getUserViews({
-            userId: this.userId!,
+        return this.sdkCall(async () => {
+            const response = await getUserViewsApi(this._api).getUserViews({
+                userId: this.userId!,
+            });
+            return response.data.Items || [];
         });
-        return viewsResponse.data.Items || [];
     }
 
     public async getItems(params: any = {}) {
-        const userId = this.userId;
-        if (!userId) throw new Error("User not authenticated");
+        return this.sdkCall(async () => {
+            const userId = this.userId;
+            if (!userId) throw new Error("User not authenticated");
 
-        // 1. Base Query (Standard Navigation)
-        const query: any = {
-            userId: userId,
-            fields: ["AlbumArtist", "Artists", "ParentId"] as any, // Standard fields
-            enableImageTypes: "Primary,Backdrop,Banner,Thumb",
-            ...params
-        };
+            const query: any = {
+                userId: userId,
+                fields: ["AlbumArtist", "Artists", "ParentId"] as any,
+                enableImageTypes: "Primary,Backdrop,Banner,Thumb",
+                ...params
+            };
 
-        // Mapping safety: parentId (camelCase) -> ParentId (PascalCase) for SDK/API consistency
-        if (params.parentId) query.parentId = params.parentId;
-        if (params.ParentId) query.parentId = params.ParentId;
+            if (params.parentId) query.parentId = params.parentId;
+            if (params.ParentId) query.parentId = params.ParentId;
 
-        // Ensure recursive is false by default unless specified or searching
-        // SDK might default to false, but let's be explicit if not searching.
-
-        // 2. Conditional Logic "Search Mode"
-        if (params.searchTerm || params.SearchTerm) {
-            // Search Mode: We want to search deeply across types
-            query.searchTerm = params.searchTerm || params.SearchTerm;
-            query.recursive = true;
-            query.includeItemTypes = "Movie,Series,Episode,Audio";
-        } else {
-            // Navigation Mode: Do NOT force recursion. 
-            // Valid navigation might request Recursive=true explicitly (e.g. "Flatten" view), so we respect params if set.
-            if (params.Recursive !== undefined) {
-                query.recursive = params.Recursive === 'true' || params.Recursive === true;
+            if (params.searchTerm || params.SearchTerm) {
+                query.searchTerm = params.searchTerm || params.SearchTerm;
+                query.recursive = true;
+                query.includeItemTypes = "Movie,Series,Episode,Audio";
+            } else {
+                if (params.Recursive !== undefined) {
+                    query.recursive = params.Recursive === 'true' || params.Recursive === true;
+                }
             }
-            // Do NOT set includeItemTypes here, so Folders/Seasons are returned.
-        }
 
-        const itemsResponse = await getItemsApi(this._api).getItems(query);
-        let items = itemsResponse.data.Items || [];
+            const itemsResponse = await getItemsApi(this._api).getItems(query);
+            let items = itemsResponse.data.Items || [];
 
-        // 4. Filtering (Smart Filter ONLY in search)
-        if (query.searchTerm) {
-            items = this.smartFilter(items, query.searchTerm);
-        }
+            if (query.searchTerm) {
+                items = this.smartFilter(items, query.searchTerm);
+            }
 
-        // Standard filtering (IsMissing, Virtual)
-        return items.filter((item: any) => {
-            if (item.LocationType === 'Virtual') return false;
-            // SDK might not have IsMissing on BaseItemDto strictly typed depending on version, check existence
-            if (item.IsMissing === true) return false;
-            return true;
+            return items.filter((item: any) => {
+                if (item.LocationType === 'Virtual') return false;
+                if (item.IsMissing === true) return false;
+                return true;
+            });
         });
     }
 
@@ -116,22 +162,11 @@ export default class JellyfinClient {
         if (!term) return items;
         const lowerTerm = term.toLowerCase();
 
-        // Check for non-ASCII characters (e.g. Japanese, emojis, etc.)
-        // If present, fallback to simple inclusion check
-        // Regex: [^\x00-\x7F] matches any character that is not ASCII
         if (/[^\x00-\x7F]/.test(term)) {
             return items.filter(item => item.Name?.toLowerCase().includes(lowerTerm));
         }
 
-        // Strict Alpha-Numeric Filtering
-        // We want to match "Lain" but not "Villainess"
-        // Look for word boundaries or non-alphanumeric separators
-
         const escapedTerm = this.escapeRegExp(term);
-        // Regex explanation:
-        // (?:^|[^a-z0-9]) : Match start of string OR a non-alphanumeric char (e.g. space, dot, colon)
-        // term : The search term
-        // (?:$|[^a-z0-9]) : Match end of string OR a non-alphanumeric char
         const regex = new RegExp(`(?:^|[^a-z0-9])${escapedTerm}(?:$|[^a-z0-9])`, 'i');
 
         return items.filter(item => {
@@ -140,35 +175,28 @@ export default class JellyfinClient {
     }
 
     private escapeRegExp(string: string) {
-        return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); // $& means the whole matched string
+        return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     }
 
     public async getItem(itemId: string) {
-        const itemsResponse = await getItemsApi(this._api).getItems({
-            userId: this.userId!,
-            ids: [itemId],
-            fields: ["AlbumArtist", "Artists", "MediaSources"] as any,
+        return this.sdkCall(async () => {
+            const itemsResponse = await getItemsApi(this._api).getItems({
+                userId: this.userId!,
+                ids: [itemId],
+                fields: ["AlbumArtist", "Artists", "MediaSources"] as any,
+            });
+            return itemsResponse.data.Items?.[0];
         });
-        return itemsResponse.data.Items?.[0];
     }
 
     public async getImage(itemId: string, imageType: string = "Primary", index?: number) {
         let url = `${this.serverUrl}/Items/${itemId}/Images/${imageType}`;
-        if (index !== undefined) {
-            url += `/${index}`;
-        }
+        if (index !== undefined) url += `/${index}`;
 
-        const response = await fetch(url, {
-            headers: {
-                "User-Agent": JellyfinClient.APP_NAME,
-                "X-Emby-Token": this.apiKey // Important for authorization if needed for some images
-            },
-        });
-        return response;
+        return this.fetchCall(url);
     }
 
     public async getStream(itemId: string, proxyId: string, options?: ProxyOptions) {
-        // 1. Get Item Type to distinguish Audio vs Video
         const item = await this.getItem(itemId);
         const isAudio = item?.Type === 'Audio';
         const mediaSourceId = item?.MediaSources?.[0]?.Id;
@@ -176,32 +204,20 @@ export default class JellyfinClient {
         let url: URL;
 
         if (isAudio) {
-            // Audio Logic
             url = new URL(`${this.serverUrl}/Audio/${itemId}/stream`);
-            url.searchParams.set("api_key", this.apiKey);
-            if (mediaSourceId) {
-                url.searchParams.set("MediaSourceId", mediaSourceId);
-            }
+            if (mediaSourceId) url.searchParams.set("MediaSourceId", mediaSourceId);
 
-            // Audio-specific parameters
             url.searchParams.set("static", "true");
             url.searchParams.set("container", "mp3");
             url.searchParams.set("audioCodec", "mp3");
-            // Explicitly ensuring no video params are added
         } else {
-            // Video Logic (Default)
             url = new URL(`${this.serverUrl}/Videos/${itemId}/stream`);
-            url.searchParams.set("api_key", this.apiKey);
-            if (mediaSourceId) {
-                url.searchParams.set("MediaSourceId", mediaSourceId);
-            }
+            if (mediaSourceId) url.searchParams.set("MediaSourceId", mediaSourceId);
 
-            // Default encoding settings
             url.searchParams.set("container", "mp4");
             url.searchParams.set("audioCodec", "aac");
             url.searchParams.set("videoCodec", "h264");
 
-            // Override encoding settings if provided
             for (const [k, v] of Object.entries(encodingSettings)) {
                 url.searchParams.set(k, v);
             }
@@ -210,10 +226,8 @@ export default class JellyfinClient {
                 url.searchParams.set("AudioStreamIndex", options.audioStreamIndex.toString());
             }
 
-            // Include subtitle parameters if provided
             if (options?.subtitleStreamIndex !== undefined) {
                 url.searchParams.set("SubtitleMethod", options.subtitleMethod || SubtitleMethod.Encode);
-                // url.searchParams.set("SubtitleCodec", "srt"); // Removed to fix PGS subtitle crash
                 url.searchParams.set("SubtitleStreamIndex", options.subtitleStreamIndex.toString());
             }
         }
@@ -223,40 +237,26 @@ export default class JellyfinClient {
         url.searchParams.set("DeviceId", `jellyfin-vrchat-${proxyId}`);
 
         // FIX: Explicitly remove SubtitleCodec to allow FFmpeg to handle image-based subtitles (PGS/VOBSUB)
-        // If "srt" is passed, Jellyfin attempts conversion which fails for image formats.
         url.searchParams.delete("SubtitleCodec");
 
-        // Log Redaction
-        const logUrl = new URL(url.toString());
-        logUrl.searchParams.set("api_key", "REDACTED");
-        console.log(`Requesting stream from ${logUrl.toString()}`);
+        log.info(`Requesting stream: ${url.pathname}${url.search.replace(/api_key=[a-zA-Z0-9]+/, "api_key=REDACTED")}`);
 
-        const response = await fetch(url.toString(), {
-            headers: {
-                "User-Agent": JellyfinClient.APP_NAME,
-            },
-            agent: (parsedUrl) => {
+        return this.fetchCall(url.toString(), {
+            agent: (parsedUrl: any) => {
                 if (parsedUrl.protocol === 'http:') {
                     return httpAgent;
                 } else {
                     return httpsAgent;
                 }
             },
-            timeout: 0, // Disable timeout to allow long transcoding pre-rolls
+            timeout: 0,
         });
-
-        return response;
     }
 
-    // New method to fetch available subtitle streams
     // Fetch available media streams (Audio & Subtitles)
     public async getMediaStreams(itemId: string) {
-        const url = `${this.serverUrl}/Items/${itemId}?Fields=MediaStreams&api_key=${this.apiKey}`;
-        const response = await fetch(url, {
-            headers: {
-                "User-Agent": JellyfinClient.APP_NAME,
-            },
-        });
+        const url = `${this.serverUrl}/Items/${itemId}?Fields=MediaStreams`;
+        const response = await this.fetchCall(url);
         const data = await response.json();
         const streams = data.MediaStreams || [];
         return {
@@ -265,5 +265,3 @@ export default class JellyfinClient {
         };
     }
 }
-
-

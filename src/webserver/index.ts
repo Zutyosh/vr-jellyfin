@@ -11,6 +11,7 @@ import ffmpegStatic from "ffmpeg-static";
 import ProxyManager from "../jellyfin/proxy/proxyManager";
 import { client } from "../jellyfin";
 import { ProxyOptions, SubtitleMethod } from "../jellyfin/proxy/proxy";
+import { log } from "../utils/logger";
 
 // Set FFmpeg and FFprobe paths for fluent-ffmpeg
 if (ffmpegStatic) ffmpeg.setFfmpegPath(ffmpegStatic);
@@ -28,22 +29,110 @@ const segmentationLocks = new Map<string, Promise<void>>();
 
 const app = express();
 
-app.use(express.json());
+// ── security headers ────────────────────────────────────────────────
+app.use((_req, res, next) => {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Frame-Options", "DENY");
+    res.setHeader("X-XSS-Protection", "0");
+    res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+    res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+    next();
+});
+
+app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true }));
 
-// Serve static files from the React app
+// ── optional basic auth ─────────────────────────────────────────────
+const AUTH_USER = process.env.AUTH_USERNAME;
+const AUTH_PASS = process.env.AUTH_PASSWORD;
+
+if (AUTH_USER && AUTH_PASS) {
+    log.info("Basic authentication enabled");
+
+    app.use((req, res, next) => {
+        // stream and playlist URLs must stay open for VR players
+        if (req.path.startsWith("/v/") || req.path.startsWith("/playlist/")) return next();
+
+        const header = req.headers.authorization;
+        if (!header || !header.startsWith("Basic ")) {
+            res.setHeader("WWW-Authenticate", 'Basic realm="vr-jellyfin"');
+            return res.status(401).send("Authentication required");
+        }
+
+        const decoded = Buffer.from(header.slice(6), "base64").toString();
+        const sep = decoded.indexOf(":");
+        const user = decoded.slice(0, sep);
+        const pass = decoded.slice(sep + 1);
+
+        if (user === AUTH_USER && pass === AUTH_PASS) return next();
+
+        res.setHeader("WWW-Authenticate", 'Basic realm="vr-jellyfin"');
+        return res.status(401).send("Invalid credentials");
+    });
+}
+
+// ── rate limiting (in-memory, no deps) ──────────────────────────────
+const hits = new Map<string, { count: number; expires: number }>();
+const RATE_WINDOW = 60_000;
+const RATE_MAX = 120;
+
+// clean stale entries every 5 minutes
+setInterval(() => {
+    const now = Date.now();
+    for (const [ip, entry] of hits) {
+        if (now > entry.expires) hits.delete(ip);
+    }
+}, 5 * 60_000);
+
+app.use((req, res, next) => {
+    if (req.path.startsWith("/v/") || req.path.startsWith("/playlist/")) return next();
+
+    const ip = req.ip || req.socket.remoteAddress || "unknown";
+    const now = Date.now();
+    const entry = hits.get(ip);
+
+    if (!entry || now > entry.expires) {
+        hits.set(ip, { count: 1, expires: now + RATE_WINDOW });
+        return next();
+    }
+
+    entry.count++;
+    if (entry.count > RATE_MAX) {
+        return res.status(429).send("Too many requests, slow down");
+    }
+
+    next();
+});
+
+// ── static files ────────────────────────────────────────────────────
 app.use("/assets", express.static("dist/client")); // Vite builds assets to dist/client
 app.use(express.static("dist/client"));
 
-// API Endpoints
+// ── validation helper ───────────────────────────────────────────────
+const ITEM_ID_RE = /^[a-f0-9]{32}$/i;
+function isValidId(id: string): boolean {
+    return ITEM_ID_RE.test(id);
+}
+
+// ── routes ──────────────────────────────────────────────────────────
+
+// Health check endpoint
+app.get("/api/health", async (_req, res) => {
+    try {
+        const views = await client.getUserViews();
+        res.json({ status: "ok", libraries: views.length });
+    } catch {
+        res.status(503).json({ status: "error", message: "Jellyfin unreachable" });
+    }
+});
 
 // Get User Views (Libraries)
-app.get("/api/views", async (req, res) => {
+app.get("/api/views", async (_req, res) => {
     try {
         const items = await client.getUserViews();
         res.json(items);
     } catch (error) {
-        console.error("Error fetching views:", error);
+        log.error("Error fetching views:", error);
         res.status(500).json({ error: "Failed to fetch views" });
     }
 });
@@ -51,12 +140,20 @@ app.get("/api/views", async (req, res) => {
 // Get Items (Children of a folder or Search)
 app.get("/api/items", async (req, res) => {
     try {
-        // Pass everything in query to client.getItems
-        // This includes parentId, searchTerm, Recursive, IncludeItemTypes, etc.
-        const items = await client.getItems(req.query);
+        // Only forward known query keys to Jellyfin
+        const allowed = [
+            "parentId", "ParentId", "searchTerm", "SearchTerm",
+            "Recursive", "IncludeItemTypes",
+        ];
+        const safe: Record<string, any> = {};
+        for (const key of allowed) {
+            if (req.query[key] !== undefined) safe[key] = req.query[key];
+        }
+
+        const items = await client.getItems(safe);
         res.json(items);
     } catch (error) {
-        console.error("Error fetching items:", error);
+        log.error("Error fetching items:", error);
         res.status(500).json({ error: "Failed to fetch items" });
     }
 });
@@ -64,6 +161,8 @@ app.get("/api/items", async (req, res) => {
 // Get Item Details
 app.get("/api/item/:id", async (req, res) => {
     const itemId = req.params.id;
+    if (!isValidId(itemId)) return res.status(400).json({ error: "Invalid item ID" });
+
     try {
         const item = await client.getItem(itemId);
         if (!item) {
@@ -71,7 +170,7 @@ app.get("/api/item/:id", async (req, res) => {
         }
         res.json(item);
     } catch (error) {
-        console.error("Error fetching item:", error);
+        log.error("Error fetching item:", error);
         res.status(500).json({ error: "Failed to fetch item" });
     }
 });
@@ -80,6 +179,8 @@ app.get("/api/item/:id", async (req, res) => {
 // Supports /api/image/:id (Primary) or /api/image/:id/:type/:index
 app.get(["/api/image/:id", "/api/image/:id/:type", "/api/image/:id/:type/:index"], async (req, res) => {
     const itemId = req.params.id;
+    if (!isValidId(itemId)) return res.status(400).json({ error: "Invalid item ID" });
+
     const imageType = req.params.type;
     const index = req.params.index ? parseInt(req.params.index) : undefined;
 
@@ -102,7 +203,7 @@ app.get(["/api/image/:id", "/api/image/:id/:type", "/api/image/:id/:type/:index"
             res.status(500).send("No image body");
         }
     } catch (error) {
-        console.error("Error proxing image:", error);
+        log.error("Error proxying image:", error);
         res.status(500).send("Image proxy failed");
     }
 });
@@ -110,6 +211,8 @@ app.get(["/api/image/:id", "/api/image/:id/:type", "/api/image/:id/:type/:index"
 // Create Proxy (Generate Stream Link)
 app.post("/api/proxy/:id", async (req, res) => {
     const itemId = req.params.id;
+    if (!isValidId(itemId)) return res.status(400).json({ error: "Invalid item ID" });
+
     const { subtitleStreamIndex, audioStreamIndex } = req.body;
 
     const proxyOptions: ProxyOptions = {};
@@ -139,11 +242,13 @@ app.post("/api/proxy/:id", async (req, res) => {
 // Get Media Streams (Audio & Subtitles)
 app.get("/api/streams/:itemId", async (req, res) => {
     const itemId = req.params.itemId;
+    if (!isValidId(itemId)) return res.status(400).json({ error: "Invalid item ID" });
+
     try {
         const streams = await client.getMediaStreams(itemId);
         res.json(streams);
     } catch (error) {
-        console.error('Error fetching media streams:', error);
+        log.error('Error fetching media streams:', error);
         res.status(500).json({ error: 'Failed to fetch media streams.' });
     }
 });
@@ -157,7 +262,7 @@ app.get('/playlist/:albumId.m3u8', async (req, res) => {
     const { albumId } = req.params;
 
     // Validate albumId format (Jellyfin UUIDs are 32 hex chars)
-    if (!/^[a-f0-9]{32}$/i.test(albumId)) {
+    if (!isValidId(albumId)) {
         return res.status(400).json({ error: 'Invalid album ID' });
     }
 
@@ -199,7 +304,7 @@ app.get('/playlist/:albumId.m3u8', async (req, res) => {
         res.setHeader('Cache-Control', 'no-cache');
         res.send(playlist);
     } catch (error) {
-        console.error('[HLS] Error generating master playlist:', error);
+        log.error('[HLS] Error generating master playlist:', error);
         res.status(500).json({ error: 'Failed to generate playlist' });
     }
 });
@@ -210,7 +315,7 @@ app.get('/playlist/track/:trackId/index.m3u8', async (req, res) => {
     const { trackId } = req.params;
 
     // Validate trackId format
-    if (!/^[a-f0-9]{32}$/i.test(trackId)) {
+    if (!isValidId(trackId)) {
         return res.status(400).json({ error: 'Invalid track ID' });
     }
 
@@ -265,7 +370,7 @@ app.get('/playlist/track/:trackId/index.m3u8', async (req, res) => {
         const apiKey = client.apiKey;
         const streamUrl = `${jellyfinUrl}/Audio/${trackId}/stream?api_key=${apiKey}&static=true`;
 
-        console.log(`[HLS] Starting segmentation for track ${trackId}`);
+        log.info(`[HLS] Starting segmentation for track ${trackId}`);
 
         const segmentationPromise = new Promise<void>(async (resolve, reject) => {
             let timedOut = false;
@@ -273,7 +378,7 @@ app.get('/playlist/track/:trackId/index.m3u8', async (req, res) => {
             // Timeout protection
             const timeout = setTimeout(() => {
                 timedOut = true;
-                console.error(`[FFmpeg] Timeout for track ${trackId} after ${FFMPEG_TIMEOUT_MS}ms`);
+                log.error(`[FFmpeg] Timeout for track ${trackId} after ${FFMPEG_TIMEOUT_MS}ms`);
                 // Clean up partial files
                 if (fs.existsSync(cacheDir)) {
                     fs.rmSync(cacheDir, { recursive: true, force: true });
@@ -295,7 +400,7 @@ app.get('/playlist/track/:trackId/index.m3u8', async (req, res) => {
                     return;
                 }
 
-                console.log(`[HLS] Stream fetched for ${trackId}, piping to FFmpeg via stdin`);
+                log.info(`[HLS] Stream fetched for ${trackId}, piping to FFmpeg via stdin`);
 
                 // Convert Web ReadableStream to Node.js Readable for fluent-ffmpeg
                 const nodeStream = Readable.fromWeb(fetchResponse.body as any);
@@ -319,25 +424,25 @@ app.get('/playlist/track/:trackId/index.m3u8', async (req, res) => {
                     ])
                     .output(playlistPath)
                     .on('start', (cmdline) => {
-                        console.log(`[FFmpeg] Command: ${cmdline}`);
+                        log.info(`[FFmpeg] Command: ${cmdline}`);
                     })
                     .on('progress', (progress) => {
                         if (progress.percent) {
-                            console.log(`[FFmpeg] ${trackId}: ${Math.round(progress.percent)}%`);
+                            log.info(`[FFmpeg] ${trackId}: ${Math.round(progress.percent)}%`);
                         }
                     })
                     .on('end', () => {
                         clearTimeout(timeout);
                         if (!timedOut) {
-                            console.log(`[HLS] Segmentation complete for track ${trackId}`);
+                            log.info(`[HLS] Segmentation complete for track ${trackId}`);
                             resolve();
                         }
                     })
                     .on('error', (err: Error, _stdout: string, stderr: string) => {
                         clearTimeout(timeout);
                         if (!timedOut) {
-                            console.error(`[FFmpeg] Error for track ${trackId}:`, err.message);
-                            console.error(`[FFmpeg] stderr:`, stderr);
+                            log.error(`[FFmpeg] Error for track ${trackId}: ${err.message}`);
+                            log.error(`[FFmpeg] stderr: ${stderr}`);
                             if (fs.existsSync(cacheDir)) {
                                 fs.rmSync(cacheDir, { recursive: true, force: true });
                             }
@@ -347,7 +452,7 @@ app.get('/playlist/track/:trackId/index.m3u8', async (req, res) => {
                     .run();
             } catch (fetchErr: any) {
                 clearTimeout(timeout);
-                console.error(`[HLS] Failed to fetch stream for ${trackId}:`, fetchErr.message);
+                log.error(`[HLS] Failed to fetch stream for ${trackId}: ${fetchErr.message}`);
                 reject(fetchErr);
             }
         });
@@ -360,7 +465,7 @@ app.get('/playlist/track/:trackId/index.m3u8', async (req, res) => {
         serveRewrittenPlaylist();
     } catch (error: any) {
         segmentationLocks.delete(trackId);
-        console.error('[HLS] Segmentation error:', error.message || error);
+        log.error('[HLS] Segmentation error:', error.message || error);
         res.status(500).json({ error: 'Segmentation failed', details: error.message });
     }
 });
@@ -371,7 +476,7 @@ app.get('/playlist/track/:trackId/:segment', (req, res) => {
     const { trackId, segment } = req.params;
 
     // Path traversal protection: validate trackId (Jellyfin UUID)
-    if (!/^[a-f0-9]{32}$/i.test(trackId)) {
+    if (!isValidId(trackId)) {
         return res.status(400).json({ error: 'Invalid track ID' });
     }
 
@@ -412,14 +517,14 @@ function cleanupHlsCache() {
                 const stat = fs.statSync(trackDir);
                 if (stat.isDirectory() && (now - stat.mtimeMs > CACHE_MAX_AGE_MS)) {
                     fs.rmSync(trackDir, { recursive: true, force: true });
-                    console.log(`[HLS Cache] Cleaned track ${trackId}`);
+                    log.info(`[HLS Cache] Cleaned track ${trackId}`);
                 }
             } catch {
                 // Ignore individual errors during cleanup
             }
         }
     } catch (err) {
-        console.error('[HLS Cache] Cleanup error:', err);
+        log.error('[HLS Cache] Cleanup error:', err);
     }
 }
 
@@ -443,7 +548,7 @@ app.get("/v/:id", async (req, res) => {
         const response = await client.getStream(itemId!, proxy.id, options);
         if (!response.ok || !response.body) {
             const errorText = await response.text();
-            console.error(`Jellyfin stream fetch failed:`, {
+            log.error(`Jellyfin stream fetch failed:`, {
                 status: response.status,
                 statusText: response.statusText,
                 headers: Object.fromEntries(response.headers.entries()),
@@ -458,10 +563,10 @@ app.get("/v/:id", async (req, res) => {
             res.setHeader(key, value);
         }
         response.body.pipe(res);
-        console.log(`Piping stream to client with options:`, options);
+        log.info(`Piping stream to client with options:`, options);
     } catch (err: any) {
         const errorMessage = (err.message || err.toString()).replace(/api_key=[a-zA-Z0-9]+/, "api_key=REDACTED");
-        console.error('Error in /v/:id route:', errorMessage);
+        log.error('Error in /v/:id route:', errorMessage);
         res.status(500).send('Internal server error while proxying video stream.');
     }
 });
@@ -480,7 +585,7 @@ app.get("*", (req, res) => {
 // Start Server
 client.authenticate().then((success) => {
     if (!success) {
-        console.error("Failed to authenticate with Jellyfin server");
+        log.error("Failed to authenticate with Jellyfin server");
         process.exit(1);
     }
 
@@ -488,6 +593,6 @@ client.authenticate().then((success) => {
     const port = parseInt(process.env.WEBSERVER_PORT || "4000");
 
     server.listen(port, () => {
-        console.log(`Webserver listening on port ${port}`);
+        log.info(`Webserver listening on port ${port}`);
     });
 });

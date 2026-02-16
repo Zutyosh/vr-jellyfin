@@ -1,10 +1,10 @@
-// src/jellyfin/proxy/proxy.ts
+import { randomBytes } from "crypto";
 
 export default class Proxy {
-    public readonly id: string = Math.random().toString(36).substring(2, 15);
+    public readonly id: string = randomBytes(16).toString("hex");
     public readonly createdAt: Date = new Date();
 
-    constructor(public itemId: string, public options?: ProxyOptions) { } // Modified to accept options
+    constructor(public itemId: string, public options?: ProxyOptions) { }
 }
 
 export interface ProxyOptions {
